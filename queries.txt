@@ -1,0 +1,89 @@
+/*
+//--select column_name, ordinal_position, column_default, is_nullable, is_updatable,data_type,udt_name, is_generated, generation_expression from information_schema.columns where table_name='subject_code' and table_catalog='cixpdb' and table_schema='public';
+//--select table_name,constraint_name,column_name,ordinal_position, position_in_unique_constraint from information_schema.key_column_usage where table_catalog='cixpdb' AND table_schema='public' order by constraint_name, ordinal_position
+//--select constraint_name, table_name, constraint_type, is_deferrable, initially_deferred, enforced from information_schema.table_constraints where table_catalog='cixpdb' AND table_schema='public' AND constraint_type='PRIMARY KEY'
+
+*/
+
+
+/*
+select
+
+	tab.table_name,
+	kcu.column_name,
+       tco.constraint_name,
+		tco.column_name,
+	tco.constraint_type,
+	tco.is_deferrable,
+	tco.initially_deferred,
+	tco.enforced
+
+from information_schema.GetTableNames tab
+left join information_schema.table_constraints tco
+          on tco.table_schema = tab.table_schema
+          and tco.table_name = tab.table_name
+          and ( tco.constraint_type = 'PRIMARY KEY' or tco.constraint_type = 'FOREIGN KEY' or tco.constraint_type = 'UNIQUE')
+left join information_schema.key_column_usage kcu
+          on kcu.constraint_name = tco.constraint_name
+          and kcu.constraint_schema = tco.constraint_schema
+          and kcu.constraint_name = tco.constraint_name
+where tab.table_catalog='cixpdb' AND tab.table_schema = 'public'
+      and tab.table_type = 'BASE TABLE'
+
+group by tab.table_schema,
+         tab.table_name,
+        tco.constraint_name
+
+
+order by tab.table_schema,
+         tab.table_name
+*/
+--select table_name from information_schema.tables where table_catalog='cixpdb' and table_schema='public';
+
+--select column_name, ordinal_position, column_default, is_nullable, is_updatable,data_type,udt_name, is_generated, generation_expression from information_schema.columns where table_name='subject_code' and table_catalog='cixpdb' and table_schema='public';
+
+--select * from  information_schema.table_constraints
+--select constraint_name, table_name, constraint_type, is_deferrable, initially_deferred, enforced from information_schema.table_constraints;
+--select * from information_schema.table_constraints;
+--select constraint_name, table_name, constraint_type, is_deferrable, initially_deferred, enforced from information_schema.table_constraints where table_catalog='cixpdb' AND table_schema='public' AND constraint_type='PRIMARY KEY'
+
+--select table_name,constraint_name,column_name,ordinal_position, position_in_unique_constraint from information_schema.key_column_usage where table_catalog='cixpdb' AND table_schema='public' order by constraint_name, ordinal_position
+
+--select table_name,constraint_name,column_name,ordinal_position, position_in_unique_constraint from information_schema.key_column_usage where table_catalog='cixpdb' AND table_schema='public' order by constraint_name, ordinal_position
+--select constraint_name,column_name,ordinal_position, position_in_unique_constraint from information_schema.key_column_usage where table_catalog='cixpdb' AND table_schema='public' and table_name='subject_code' order by constraint_name, ordinal_position
+
+--select * from information_schema.key_column_usage where table_catalog='cixpdb' AND table_schema='public' and table_name='subject_code' order by constraint_name, ordinal_position
+
+--select constraint_name, table_name, constraint_type, is_deferrable, initially_deferred, enforced from information_schema.table_constraints where table_catalog='cixpdb' AND table_schema='public' order by table_name
+--select column_name, ordinal_position, column_default, is_nullable, is_updatable,data_type,udt_name, is_generated, generation_expression from information_schema.columns where table_name='subject_code' and table_catalog='cixpdb' and table_schema='public';
+
+--select * from information_schema.table_constraints where table_catalog='cixpdb' AND table_schema='public' order by table_name
+--select table_name, constraint_name, constraint_type from information_schema.table_constraints where table_catalog='cixpdb' AND table_schema='public' and constraint_type IN('PRIMARY KEY', ' FOREIGN KEY', 'UNIQUE') order by table_name
+select table_name, constraint_name, column_name, ordinal_position from information_schema.key_column_usage where table_catalog='cixpdb' AND table_schema='public' order by table_name, constraint_name, ordinal_position
+--select * from information_schema.key_column_usage where table_catalog='cixpdb' AND table_schema='public'
+--order by constraint_name, ordinal_position
+
+
+--select *,* from information_schema.key_column_usage as kcu full join information_schema.table_constraints as tco
+--on kcu.table_name == tco.table_name
+
+select tab.table_schema,
+       tab.table_name,
+       tco.constraint_name,
+       string_agg(kcu.column_name, ', ') as key_columns
+from information_schema.tables tab
+left join information_schema.table_constraints tco
+          on tco.table_schema = tab.table_schema
+          and tco.table_name = tab.table_name
+          and tco.constraint_type = 'PRIMARY KEY'
+left join information_schema.key_column_usage kcu
+          on kcu.constraint_name = tco.constraint_name
+          and kcu.constraint_schema = tco.constraint_schema
+          and kcu.constraint_name = tco.constraint_name
+where tab.table_schema not in ('pg_catalog', 'information_schema')
+      and tab.table_type = 'BASE TABLE'
+group by tab.table_schema,
+         tab.table_name,
+         tco.constraint_name
+order by tab.table_schema,
+         tab.table_name

@@ -1,0 +1,25 @@
+[example_db]
+    wipe = true
+    auto-timestamp = true
+    models-path = "cd ../."
+    #database connection settings
+    dbname = "exampleDB"
+    host = "localhost"
+    port = 5432  #[ 8001, 8001, 8002 ]
+    user = "postgres"
+    password = ""
+    #add-batch-operations = false
+
+
+#whitelist = []
+# blacklist = ["migrations", "other"]
+
+#tag  =			[]
+#debug = 		false
+#add-batch-operations = false
+#add-global-variants  =  false
+#add-panic-variants  = 	 false
+#no-context  = 		false
+#auto-timestamps  = 	false
+#rows-affected  = 	false
+#driver-templates = 	false
