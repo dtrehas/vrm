@@ -167,7 +167,7 @@ func VariablesTypesAndTags(separator string, columns []*vrm.Column, conf *Config
 
 			//if more tags follow, separate them with comma
 			if !conf.NoXMLTag || !conf.NoDbTag {
-				b.WriteRune(',')
+				b.WriteRune(' ')
 			}
 		}
 
@@ -178,7 +178,7 @@ func VariablesTypesAndTags(separator string, columns []*vrm.Column, conf *Config
 
 			//if Db Tag is following, separate the current tag with next one with a comma (,)
 			if !conf.NoDbTag {
-				b.WriteRune(',')
+				b.WriteRune(' ')
 			}
 		}
 
