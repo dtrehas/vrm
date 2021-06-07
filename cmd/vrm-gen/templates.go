@@ -19,7 +19,7 @@ type {{ .CamelCaseTable }}Table struct {
 }
 
 var {{ $UpperCaseTable }} = {{ .CamelCaseTable }}Table{
-	__name__: {{ $tick }}{{ escapeIfReservedWord $Table}}{{ $tick }},
+	Name__: {{ $tick }}{{ escapeIfReservedWord $Table}}{{ $tick }},
 
 {{ range .Columns }}
 	{{ camelCase .Name }} : vrm.Column{
