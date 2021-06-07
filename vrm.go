@@ -21,11 +21,6 @@ var (
 	_ Quexecer = *new(pgx.Tx)
 )
 
-type Tabler interface {
-	String() string
-	//	ColumnSet() Columns
-}
-
 // Quexecer is an interface that pgxscan can query and get the pgx.Rows from.
 // For example, it can be: *pgxpool.Pool, *pgx.Conn or pgx.Tx.
 type Quexecer interface {
@@ -54,18 +49,32 @@ var (
 	_ Quexecer = *new(pgx.Tx)
 )
 
-//type TableNameType string
+type Tabler interface {
+	Name_() string
+	Schema_() string
+	WriteSchema_() bool
+}
 
 type Table struct {
-	Name        string
-	Schema      string
-	WriteSchema bool
+	Name__, Schema__ string
+	WriteSchema__    bool
+}
+
+func (t *Table) Name_() string      { return t.Name__ }
+func (t *Table) Schema_() string    { return t.Schema__ }
+func (t *Table) WriteSchema_() bool { return t.WriteSchema__ }
+func (t *Table) String() string {
+	if t.WriteSchema_() {
+		return t.Schema__ + "." + t.Name__
+	} else {
+		return t.Name__
+	}
 }
 
 //Column contains information for database column.
 type Column struct {
-	Table         *Table
-	WriteTable    **bool
+	Table         Tabler
+	IsWriteTable  **bool
 	Array         bool
 	Key           bool
 	GoType        string
@@ -78,15 +87,13 @@ type Column struct {
 	Serial        bool
 	Type          string
 	Unique        bool
-	//Db2Go         Converter
-	//Go2Db         Converter
 }
 
 //String returns the column name or the table name + . + the column name
 func (c *Column) String() string {
 
-	if **c.WriteTable {
-		return c.Table.Name + "." + c.Name
+	if **c.IsWriteTable {
+		return c.Table.Name_() + "." + c.Name
 	}
 	return c.Name
 }
@@ -189,5 +196,4 @@ func ColumnsOf(table interface{}) Columns {
 		}
 	}
 	return columns
-
 }

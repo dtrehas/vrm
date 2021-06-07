@@ -288,12 +288,12 @@ func EscapedColumnsAndVariableNums(separator string, columns []*vrm.Column, args
 	return b.String()
 }
 
-func PrimaryKeyOrUniqueConstraints(allConstraints []*Constraint) []*Constraint {
+func PrimaryKeyOrUniqueConstraints(allConstraints []*ConstraintInf) []*ConstraintInf {
 	if allConstraints == nil {
 		return nil
 	}
 
-	var filtered []*Constraint
+	var filtered []*ConstraintInf
 
 	for _, constraint := range allConstraints {
 
@@ -305,12 +305,12 @@ func PrimaryKeyOrUniqueConstraints(allConstraints []*Constraint) []*Constraint {
 	return filtered
 }
 
-func NoPrimaryKeyNorUniqueConstraints(allConstraints []*Constraint) []*Constraint {
+func NoPrimaryKeyNorUniqueConstraints(allConstraints []*ConstraintInf) []*ConstraintInf {
 	if allConstraints == nil {
 		return nil
 	}
 
-	var filtered []*Constraint
+	var filtered []*ConstraintInf
 
 	for _, constraint := range allConstraints {
 

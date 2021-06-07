@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -15,16 +16,40 @@ import (
 	toml "github.com/pelletier/go-toml"
 )
 
-type Table struct {
+type TableInf struct {
 	Name        string
 	Columns     []*vrm.Column
-	Constraints []*Constraint
+	Constraints []*ConstraintInf
 }
 
-type Constraint struct {
+type ConstraintInf struct {
 	Name    string
 	Type    string
 	Columns []*vrm.Column
+}
+
+func initArguments() {
+	textPtr := flag.String("text", "", "Text to parse. (Required)")
+	metricPtr := flag.String("metric", "chars", "Metric {chars|words|lines};. (Required)")
+	uniquePtr := flag.Bool("unique", false, "Measure unique values of a metric.")
+	flag.Parse()
+
+	if *textPtr == "" {
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	fmt.Printf("textPtr: %s, metricPtr: %s, uniquePtr: %t\n", *textPtr, *metricPtr, *uniquePtr)
+}
+
+func printArgHelp() {
+
+	_, file := path.Split(os.Args[0])
+
+	fmt.Printf("Usage: %v section\n", file)
+	fmt.Println("		section: settings in {section} in this directory's vrm.toml ")
+	fmt.Println("")
+	fmt.Printf("Usage: %v section [-c path to config %v.toml file]\n", file, file)
 }
 
 func main() {
@@ -32,7 +57,7 @@ func main() {
 	var conf Config
 
 	//Add congifuration options from extra program arguments like --wipe etc.
-	processArgs(&conf)
+	parseArgs(&conf)
 
 	//+Retrieve the configuration profile from {executable-name}.toml
 	//+named by the first argument after binary name
@@ -94,7 +119,14 @@ type Config struct {
 
 func (c *Config) ParseToml() { //configName, file string) {
 
-	tml, _ := toml.LoadFile(c.configFilePath)
+	tml, err := toml.LoadFile(c.configFilePath)
+	if err != nil {
+		log.Fatalln("No config file name in %v", c.configFilePath)
+	}
+
+	if !tml.Has(c.name) {
+		log.Fatalf("No %v section found in %v", c.name, c.configFilePath)
+	}
 
 	s := tml.Get(c.name).(*toml.Tree)
 
@@ -137,17 +169,27 @@ func (c *Config) ParseToml() { //configName, file string) {
 	c.Wipe = s.GetDefault("wipe", false).(bool)
 }
 
-func processArgs(conf *Config) {
-	argsWithoutProg := os.Args[1:]
+func parseArgs(conf *Config) {
+
+	//args := os.Args
+
+	// vrm-gen called without args
+	if len(os.Args) == 1 {
+		printArgHelp()
+		os.Exit(1)
+	}
+
+	//vrm-gen called with args
+	args := os.Args[1:]
 	conf.execPath = os.Args[0]
 
-	thisArgIsInputPath := false
+	isInputPath := false
 
-	for _, arg := range argsWithoutProg {
+	for _, arg := range args {
 
-		if thisArgIsInputPath {
+		if isInputPath {
 			conf.configFilePath = arg
-			thisArgIsInputPath = false
+			isInputPath = false
 			continue
 		}
 
@@ -157,7 +199,7 @@ func processArgs(conf *Config) {
 		case "--auto-timestamp":
 			conf.AutoTimestamps = true
 		case "-c":
-			thisArgIsInputPath = true
+			isInputPath = true
 		default:
 			conf.name = arg
 		}
@@ -170,7 +212,7 @@ func processConfigFile(conf *Config) {
 
 	if conf.configFilePath == "" {
 		pwd, _ := os.Getwd()
-		// path.Clean(path.Base(pwd))
+
 		execPath, _ := os.Executable()
 		exec := path.Base(path.Clean(execPath))
 		conf.configFilePath = path.Join(pwd, exec+".toml")
@@ -179,16 +221,16 @@ func processConfigFile(conf *Config) {
 	conf.ParseToml()
 }
 
-type ConstraintMap map[string]*Constraint
+type ConstraintMap map[string]*ConstraintInf
 
 var Constraints = ConstraintMap{}
 
-type TableMap map[string]*Table
+type TableMap map[string]*TableInf
 
 var Tables = TableMap{}
 
 type Data struct {
-	Tables []Table
+	Tables []TableInf
 }
 
 var fm = template.FuncMap{
@@ -385,7 +427,7 @@ func retrieveConstraints(ctx context.Context, conn vrm.Quexecer, conf *vrm.DbCon
 			table := &data.Tables[i]
 			if table.Name == table_name {
 
-				constraint := Constraint{
+				constraint := ConstraintInf{
 					Name:    constraint_name,
 					Type:    constraint_type,
 					Columns: []*vrm.Column{},
@@ -446,7 +488,7 @@ func retrieveConstraints(ctx context.Context, conn vrm.Quexecer, conf *vrm.DbCon
 
 func retrieveTablesConfig(ctx context.Context, conn vrm.Quexecer, conf *vrm.DbConfig, data *Data) {
 	tableNames := GetTableNames(ctx, conn, conf)
-	data.Tables = make([]Table, len(tableNames))
+	data.Tables = make([]TableInf, len(tableNames))
 
 	for i, tableName := range tableNames {
 

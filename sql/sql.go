@@ -103,9 +103,8 @@ func COLUMNS(ofs ...interface{}) string {
 
 		case vrm.ColumnValues:
 			cs = of.(vrm.ColumnValues).Columns
-			//case Table:
-			//	cs = of.(Table).ColumnSet()
-
+		case vrm.Table, *vrm.Table:
+			cs = vrm.ColumnsOf(of.(vrm.Table))
 		case vrm.Columns, *vrm.Columns:
 			cs = of.(vrm.Columns)
 
@@ -140,12 +139,10 @@ func VALUES(ofs ...interface{}) string {
 	for j, of := range ofs {
 		var cs vrm.Columns
 		switch of.(type) {
-		//case Table:
-		//	cs = of.(Table).ColumnSet()
+		case vrm.Table, *vrm.Table: //TODO add Table
+			cs = vrm.ColumnsOf(of.(vrm.Table))
 
-		case *vrm.ColumnValues:
-			cs = of.(*vrm.ColumnValues).Columns
-		case vrm.ColumnValues:
+		case *vrm.ColumnValues, vrm.ColumnValues:
 			cs = of.(vrm.ColumnValues).Columns
 
 		case vrm.Columns, *vrm.Columns:
@@ -183,19 +180,42 @@ func Sql(args ...interface{}) string {
 		var text string
 		switch arg.(type) {
 
-		case vrm.Stringer:
-			text = arg.(vrm.Stringer).String()
-
 		case string:
 			text = arg.(string)
 
-		case vrm.Column:
+		case vrm.Column, *vrm.Column:
+
 			text = arg.(vrm.Column).Name
+			col := arg.(vrm.Column)
+			if **col.IsWriteTable {
+				b.WriteRune('"')
+				b.WriteString(col.Table.Name_())
+				b.WriteString(`"."`)
+				b.WriteString(text)
+				b.WriteRune('"')
+			} else {
+				b.WriteRune('"')
+				b.WriteString(text)
+				b.WriteRune('"')
+			}
 
-		case vrm.Tabler:
-			text = arg.(vrm.Tabler).String()
+		case vrm.Table, *vrm.Table:
+			table := arg.(vrm.Table)
+
+			if table.WriteSchema_() {
+				b.WriteRune('"')
+				b.WriteString(table.Schema_())
+				b.WriteString(`"."`)
+				b.WriteString(table.Name_())
+				b.WriteRune('"')
+			} else {
+				b.WriteRune('"')
+				b.WriteString(table.Name_())
+				b.WriteRune('"')
+			}
+		case vrm.Stringer:
+			text = arg.(vrm.Stringer).String()
 		}
-
 		b.WriteString(text)
 		b.WriteRune(' ')
 

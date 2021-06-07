@@ -14,12 +14,12 @@ var Table_tpl_string = `
 {{- $Table := .Table }}
 
 type {{ .CamelCaseTable }}Table struct {
-	vrm.AbstractTable
+	vrm.Table
 	{{ variableNames ",\n\t" .Columns}} vrm.Column
 }
 
 var {{ $UpperCaseTable }} = {{ .CamelCaseTable }}Table{
-	Name: {{ $tick }}{{ escapeIfReservedWord $Table}}{{ $tick }},
+	__name__: {{ $tick }}{{ escapeIfReservedWord $Table}}{{ $tick }},
 
 {{ range .Columns }}
 	{{ camelCase .Name }} : vrm.Column{
@@ -37,7 +37,7 @@ func init(){
 	pWriteTable:= &writeTable
 	{{ range .Columns }}
 	{{ $UpperCaseTable }}.{{ camelCase .Name }}.Table = &{{ $UpperCaseTable }}
-	{{ $UpperCaseTable }}.{{ camelCase .Name }}.WriteTable = &pWriteTable
+	{{ $UpperCaseTable }}.{{ camelCase .Name }}.IsWriteTable = &pWriteTable
 	{{ end }}
 }
 
