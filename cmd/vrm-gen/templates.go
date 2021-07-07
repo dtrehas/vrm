@@ -43,28 +43,6 @@ func init(){
 	{{ end }}
 }
 
-func Insert{{.CamelCaseTable}} (ctx context.Context, conn vrm.Quexecer,
-		{{ variablesAndTypes ",\n\t\t" $NonSerialIdColumns }})
-		{{- if $SerialId -}} ({{ variableAndType $SerialId }}, err error) {
-
-	sql := {{ $tick -}} INSERT INTO {{ .Table }} ({{- escapedColumns "," $NonSerialIdColumns }}) VALUES ( {{- variableDollarNums "," $NonSerialIdColumns}}); {{- $tick }}
-	row := conn.QueryRow(ctx, sql, {{ variableNames ",\n\t\t" $NonSerialIdColumns }})
-
-	err = row.Scan(&{{- variableName $SerialId.Name -}})
-	if err != nil {
-		return -1, err
-	}
-	{{- else -}} (tag pgconn.CommandTag, err error) {
-	
-	sql:= {{ $tick }}INSERT INTO {{ .Table }} ({{- escapedColumns ","  $allColumns }}) VALUES ( {{- variableDollarNums "," $allColumns}});{{ $tick }}
-	
-	tag, err = conn.Exec(ctx, sql, {{ variableNames ",\n\t\t" $allColumns }})
-
-	{{- end }}
-	 
-	return 
-}
-
 {{/* ========= DELETE FUNCTIONS =========== */}}
 {{ if $PrimaryKeyOrUniqueConstraints -}}
 {{- range  $PrimaryKeyOrUniqueConstraints -}}
@@ -90,39 +68,6 @@ func Delete{{ .CamelCaseTable }} (ctx context.Context, conn vrm.Quexecer,
 }
 {{- end }}
 
-{{/* ========= UPDATE FUNCTIONS =========== */}}
-{{ if $PrimaryKeyOrUniqueConstraints -}}
-{{- range $PrimaryKeyOrUniqueConstraints -}}
-
-
-func Update{{$.CamelCaseTable }}By{{ range .Columns}}{{ variableName .Name}}{{ end }} (ctx context.Context, conn vrm.Quexecer,
-	{{- variablesAndTypes ",\n\t\t" .Columns}}, {{ variablesAndTypes ",\n\t\t" $.Columns "New"}}) (pgconn.CommandTag, error){
-
-	sql:= {{ $tick }}UPDATE {{ $.Table }} SET 
-	{{ escapedColumnsAndVariableNums ", " $.Columns}}
-	WHERE 
-		{{ escapedColumnsAndVariableNums " AND \n\t\t" .Columns}}); {{ $tick }}
-
-	return conn.Exec(ctx, sql, {{ variableNames ", " .Columns}},{{ variableNames ", " $.Columns "New"}}) 
-}
-{{ end }}{{/* range end */}}
-{{ else }}
-{{- $StartWithId:= len $.Columns -}}
-                                                                                                                                                                                                                                                                                                                                                              
-func Update{{ .CamelCaseTable }} (ctx context.Context, conn vrm.Quexecer,
-		{{ variablesAndTypes ",\n\t\t" .Columns }}, {{ variablesAndTypes ",\n\t\t" .Columns "New"}}) (pgconn.CommandTag, error){
-
-	sql:= {{ $tick }}UPDATE {{ $.Table }} SET 
-	{{ escapedColumnsAndVariableNums ", " $.Columns}}
-	WHERE
-	
-	{{ escapedColumnsAndVariableNums " AND \n\t\t" .Columns $StartWithId}}); {{ $tick }}
-
-	return conn.Exec(ctx, sql, {{ variableNames ", " $.Columns "New"}}, {{ variableNames ", " .Columns}})
-}
-{{ end }}
-
-{{/* variablesAndTypes ",\n\t\t" $noPkNoUqColumns "*" */}} 
 
 {{/* ========= SELECT FUNCTIONS =========== */}}
 {{ if $PrimaryKeyOrUniqueConstraints -}}

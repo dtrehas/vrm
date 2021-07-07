@@ -52,12 +52,22 @@ func printArgHelp() {
 	fmt.Printf("Usage: %v section [-c path to config %v.toml file]\n", file, file)
 }
 
+func genVrmSql(s string) {
+
+	//fields := strings.Fields(s)
+
+}
+
 func main() {
 
 	var conf Config
 
 	//Add congifuration options from extra program arguments like --wipe etc.
 	parseArgs(&conf)
+
+	if conf.sql != "" {
+
+	}
 
 	//+Retrieve the configuration profile from {executable-name}.toml
 	//+named by the first argument after binary name
@@ -112,6 +122,7 @@ type Config struct {
 	ModelsPath     string
 	Version        string
 	Wipe           bool
+	sql            string
 	name           string
 	configFilePath string
 	execPath       string
@@ -170,9 +181,6 @@ func (c *Config) ParseToml() { //configName, file string) {
 }
 
 func parseArgs(conf *Config) {
-
-	//args := os.Args
-
 	// vrm-gen called without args
 	if len(os.Args) == 1 {
 		printArgHelp()
@@ -185,7 +193,7 @@ func parseArgs(conf *Config) {
 
 	isInputPath := false
 
-	for _, arg := range args {
+	for i, arg := range args {
 
 		if isInputPath {
 			conf.configFilePath = arg
@@ -200,6 +208,11 @@ func parseArgs(conf *Config) {
 			conf.AutoTimestamps = true
 		case "-c":
 			isInputPath = true
+		case "-sql":
+			if i < len(args)-1 {
+				conf.sql = args[i+1]
+			}
+
 		default:
 			conf.name = arg
 		}
@@ -330,15 +343,201 @@ type Variables map[string]interface{}
 //
 //
 func genStruct(variables Variables, conf *Config, file *os.File) {
+	d := &Identer{}
 
-	file.WriteString("type " + variables["CamelCaseTable"].(string) + " struct {\n")
+	d.S("type " + variables["CamelCaseTable"].(string) + " struct {").Nl()
 
 	//every variable/type combination is seperatate by newline and some indent
 	structFields := VariablesTypesAndTags("\n\t\t", variables["Columns"].([]*vrm.Column), conf)
-	file.WriteString("\t\t")
-	file.WriteString(structFields)
-	file.WriteString("\n}\n")
+	d.S("\t\t")
+	d.S(structFields)
+	d.S("\n}\n")
 
+	file.WriteString(d.String())
+
+}
+
+func genInsertStatements(variables Variables, conf *Config, file *os.File) {
+	d := &Identer{}
+
+	columns := variables["Columns"].([]*vrm.Column)
+	nonSerialIdColumns := NonSerialIdColumns(columns)
+	variablesAndTypes := VariablesAndTypes(",\n\t\t", nonSerialIdColumns)
+	camelCaseTable := variables["CamelCaseTable"].(string)
+	table := variables["Table"].(string)
+	serialId := SerialId(columns)
+
+	d.S("func Insert").S(camelCaseTable).S(" (ctx context.Context, conn vrm.Quexecer, ").S(variablesAndTypes).R(')')
+
+	if serialId != nil {
+		d.R('(').S(VariableAndType(serialId)).S(", err error) {").MoreIdent(Tab).Nl()
+		d.S("sql := `INSERT INTO ").
+			S(table).R(' ').S(EscapedColumns(",", nonSerialIdColumns)).
+			S(" VALUES (").S(VariableDollarNums(",", nonSerialIdColumns)).
+			S(") RETURNING ").S(serialId.Name).S(";`").Nl(2)
+
+		d.S("row := conn.QueryRow(ctx, sql, " + VariableNames(",\n\t\t", nonSerialIdColumns)).S(")").Nl()
+
+		d.S("err = row.Scan(&" + VariableName(serialId.Name)).S(")").Nl(2)
+		d.S("if err!=nil {").MoreIdent(Tab).Nl()
+		d.S("return -1, err").LessIdent().Nl()
+		d.S("}").LessIdent().Nl(2)
+	} else {
+		d.S("(tag pgconn.CommandTag, err error) {").MoreIdent(Tab).Nl().
+			S("sql := `INSERT INTO ").S(table).S(" ").S(EscapedColumns(",", columns)).S(" VALUES (").S(VariableDollarNums(",", columns)).S(");`").Nl(2).
+			S("tag, err = conn.Exec(ctx, sql, ").S(VariableNames(",\n\t\t", columns)).S(")").Nl(2)
+	}
+	d.S("return").LessIdent().Nl().
+		S("}").
+		Nl()
+
+	file.WriteString(d.String())
+}
+
+func genBatchInsertStatements(variables Variables, conf *Config, file *os.File) {
+	d := &Identer{}
+
+	columns := variables["Columns"].([]*vrm.Column)
+	nonSerialIdColumns := NonSerialIdColumns(columns)
+	variablesAndTypes := VariablesAndTypes(",\n\t\t", nonSerialIdColumns)
+	camelCaseTable := variables["CamelCaseTable"].(string)
+	table := variables["Table"].(string)
+	serialId := SerialId(columns)
+
+	d.S("func BatchInsert").S(camelCaseTable).S(" (b* pgx.Batch, ").S(variablesAndTypes).R(')').
+		S("{").MoreIdent(Tab).Nl()
+
+	if serialId != nil {
+
+		d.S("sql := `INSERT INTO ").S(table).S(" ").S(EscapedColumns(",", nonSerialIdColumns)).
+			S(" VALUES (").S(VariableDollarNums(",", nonSerialIdColumns)).S(") RETURNING ").S(serialId.Name).S(";`").Nl(2)
+
+		d.S("b.Queue (sql, ").S(VariableNames(", ", nonSerialIdColumns)).R(')')
+
+	} else {
+		d.S("sql := `INSERT INTO ").S(table).R(' ').S(EscapedColumns(",", columns)).S(" VALUES (").S(VariableDollarNums(",", columns)).S(");`").Nl(2).
+			S("b.Queue (sql, ").S(VariableNames(", ", columns)).R(')')
+	}
+
+	d.LessIdent().Nl()
+	d.S("}").LessIdent().Nl(2)
+	file.WriteString(d.String())
+}
+
+func genStructBatchInsertStatements(variables Variables, conf *Config, file *os.File) {
+	d := &Identer{}
+
+	columns := variables["Columns"].([]*vrm.Column)
+	nonSerialIdColumns := NonSerialIdColumns(columns)
+
+	camelCaseTable := variables["CamelCaseTable"].(string)
+	//serialId := SerialId(columns)
+
+	d.S("func (t *").S(camelCaseTable).S(") BatchInsert(b *pgx.Batch) {").MoreIdent(Tab).Nl()
+	d.S("BatchInsert").S(camelCaseTable).S("(b, "). //t.DocumentId, t.SubjectCodeId).LessIndent().Nl()
+							S(VariableNames(",", nonSerialIdColumns, "t.", "")). //BatchInsertDocumentSubjectCode(b, t.DocumentId, t.SubjectCodeId)
+							R(')').LessIdent().Nl()
+	d.R('}').
+		Nl()
+
+	file.WriteString(d.String())
+
+}
+
+func genStructInsertStatements(variables Variables, conf *Config, file *os.File) {
+	d := &Identer{}
+
+	columns := variables["Columns"].([]*vrm.Column)
+	nonSerialIdColumns := NonSerialIdColumns(columns)
+
+	camelCaseTable := variables["CamelCaseTable"].(string)
+	serialId := SerialId(columns)
+
+	d.S("func (t *").S(camelCaseTable).S(") Insert(ctx context.Context, conn vrm.Quexecer) (").MoreIdent(Tab).Nl()
+	if serialId == nil {
+		d.S("tag pgconn.CommandTag")
+	} else {
+		d.S(VariableAndType(serialId))
+	}
+	d.S(" ,err error) {").MoreIdent(Tab).Nl()
+
+	d.S("return Insert").S(camelCaseTable).S(" (ctx, conn, ").S(VariableNames(",", nonSerialIdColumns, "t.", "")).R(')').LessIdent().Nl()
+	d.R('}').
+		Nl()
+
+	file.WriteString(d.String())
+}
+
+func genUpdateStatements(variables Variables, conf *Config, file *os.File) {
+	d := &Identer{}
+
+	columns := variables["Columns"].([]*vrm.Column)
+	constraints := variables["Constraints"].([]*ConstraintInf)
+	//nonSerialIdColumns := NonSerialIdColumns(columns)
+
+	camelCaseTable := variables["CamelCaseTable"].(string)
+	table := variables["Table"].(string)
+	//serialId := SerialId(columns)
+
+	// {{ if $PrimaryKeyOrUniqueConstraints -}}
+	primaryKeyOrUniqueConstraints := PrimaryKeyOrUniqueConstraints(constraints)
+
+	if primaryKeyOrUniqueConstraints != nil {
+		for _, constraint := range primaryKeyOrUniqueConstraints {
+
+			// func Update{{$.CamelCaseTable }}By{{ range .Columns}}{{ variableName .Name}}{{ end }} (ctx context.Context, conn vrm.Quexecer,
+			// 	{{- variablesAndTypes ",\n\t\t" .Columns}}, {{ variablesAndTypes ",\n\t\t" $.Columns "New"}}) (pgconn.CommandTag, error){
+
+			funcArgs := VariableNames(",", constraint.Columns)
+			funcName := "func Update" + camelCaseTable + "By" + VariableNames("", constraint.Columns)
+
+			d.S("//").S(funcName).S(" updates ").S(table).S(" using ").S(funcArgs).Nl()
+			d.S(funcName).S(" (ctx context.Context, conn vrm.Quexecer,").
+				S(VariablesAndTypes(",\n\t\t", constraint.Columns)).S(", ").S(VariablesAndTypes(",\n\t\t", columns, "New")).S(") (pgconn.CommandTag, error){").
+				MoreIdent(Tab).Nl()
+
+			// 	sql:= {{ $tick }}UPDATE {{ $.Table }} SET
+			d.S("sql:= `UPDATE ").S(table).S(" SET").MoreIdent(Tab).Nl().
+				// 	{{ escapedColumnsAndVariableNums ", " $.Columns}}
+				S(EscapedColumnsAndVariableNums(", ", columns)).LessIdent().Nl().
+				// 	WHERE
+				S("WHERE").MoreIdent(Tab).Nl().
+				// 		{{ escapedColumnsAndVariableNums " AND \n\t\t" .Columns}}); `
+				S(EscapedColumnsAndVariableNums(" AND \n\t\t", constraint.Columns)).S("); `").LessIdent().Nl(2).
+
+				// 	return conn.Exec(ctx, sql, {{ variableNames ", " .Columns}},{{ variableNames ", " $.Columns "New"}})
+				S("return conn.Exec(ctx, sql, ").S(VariableNames(", ", constraint.Columns)).S(", ").S(VariableNames(", ", columns, "New")).R(')').LessIdent().Nl().
+				R('}')
+			// }
+
+		}
+
+	} else {
+
+		startWithId := len(columns)
+
+		// {{- $StartWithId:= len $.Columns -}}
+
+		// func Update{{ .CamelCaseTable }} (ctx context.Context, conn vrm.Quexecer,
+		// 		{{ variablesAndTypes ",\n\t\t" .Columns }}, {{ variablesAndTypes ",\n\t\t" .Columns "New"}}) (pgconn.CommandTag, error){
+
+		funcName := "func Update" + camelCaseTable
+		funcArgs := VariablesAndTypes(", ", columns)
+		d.S("//").S(funcName).S(" updates ").S(table).S(" using ").S(funcArgs).Nl()
+
+		d.S(funcName).S("(ctx context.Context, conn vrm.Quexecer,").Nl().
+			S(VariablesAndTypes(",\n\t\t", columns)).S(", ").S(VariablesAndTypes(",\n\t\t", columns, "New")).S(") (pgconn.CommandTag, error){").
+			MoreIdent(Tab).Nl().
+			S("sql:= `UPDATE ").S(table).S(" SET").MoreIdent(Tab).Nl().
+			S(EscapedColumnsAndVariableNums(", ", columns)).LessIdent().Nl().
+			S("WHERE").MoreIdent(Tab).Nl().
+			S(EscapedColumnsAndVariableNums(" AND \n\t\t", columns, startWithId)).S("); `").LessIdent().Nl(2).
+			S("return conn.Exec(ctx, sql, ").S(VariableNames(", ", columns)).S(", ").S(VariableNames(", ", columns, "New")).R(')').
+			LessIdent().Nl().
+			R('}')
+	}
+
+	file.WriteString(d.String())
 }
 
 //createTableFile writes a file, with all necessary function to access/update/insert functions
@@ -364,6 +563,11 @@ func createTableFile(conf *Config, data *Data, tableName string) error {
 	genPackage(variables, conf, file)
 	genImports(variables, conf, file)
 	genStruct(variables, conf, file)
+	genInsertStatements(variables, conf, file)
+	genBatchInsertStatements(variables, conf, file)
+	genStructInsertStatements(variables, conf, file)
+	genStructBatchInsertStatements(variables, conf, file)
+	genUpdateStatements(variables, conf, file)
 
 	tpl, err := template.New("table_template").Funcs(fm).Parse(Table_tpl_string)
 	if err != nil {

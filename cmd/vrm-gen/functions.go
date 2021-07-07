@@ -8,6 +8,9 @@ import (
 	"github.com/dtrehas/vrm"
 )
 
+const Tab = "\t"
+const Tab2 = "\t\t"
+
 func CamelTheSnake(str string) string {
 	stringz := strings.Split(str, "_")
 
@@ -344,4 +347,87 @@ outer:
 
 	}
 	return filtered
+}
+
+type Identer struct {
+	ident            string
+	accumulatedIdent []string
+	builder          strings.Builder
+}
+
+func (d *Identer) Nl(times ...int) *Identer {
+
+	if times == nil || len(times) == 0 {
+		d.builder.WriteString("\n")
+	} else {
+		for i := 0; i < times[0]; i++ {
+			d.builder.WriteString("\n")
+		}
+	}
+	d.builder.WriteString(d.ident)
+	return d
+}
+
+func (d *Identer) S(str string) *Identer {
+	d.builder.WriteString(str)
+	return d
+}
+func (d *Identer) Int(i int) *Identer {
+	d.builder.WriteString(strconv.Itoa(i))
+	return d
+}
+
+func (d *Identer) R(r rune) *Identer {
+	d.builder.WriteRune(r)
+	return d
+}
+func (d *Identer) Buf(buf []byte) *Identer {
+	d.builder.Write(buf)
+	return d
+}
+
+func (d *Identer) MoreIdent(ident string, times ...int) *Identer {
+	if times == nil || len(times) == 0 {
+		d.accumulatedIdent = append(d.accumulatedIdent, ident)
+	} else {
+		newIdent := &strings.Builder{}
+		for i := 0; i < times[0]; i++ {
+			newIdent.WriteString(ident)
+		}
+		d.accumulatedIdent = append(d.accumulatedIdent, newIdent.String())
+	}
+	d.ident = strings.Join(d.accumulatedIdent, "")
+	return d
+}
+
+func (d *Identer) LessIdent() *Identer {
+	if len(d.accumulatedIdent) == 0 {
+		d.ident = ""
+		return d
+	}
+	d.accumulatedIdent = d.accumulatedIdent[0 : len(d.accumulatedIdent)-1]
+	d.ident = strings.Join(d.accumulatedIdent, "")
+	return d
+}
+
+func (d *Identer) SetIdent(ident string) *Identer {
+	d.ident = ident
+	d.accumulatedIdent = []string{d.ident}
+	return d
+}
+func (d *Identer) Ident() *Identer {
+	d.builder.WriteString(d.ident)
+	return d
+}
+
+func (d *Identer) Copy(other *Identer) *Identer {
+	copy(d.accumulatedIdent, other.accumulatedIdent)
+	d.ident = other.ident
+	d.builder = strings.Builder{}
+	d.builder.WriteString(other.builder.String())
+	return d
+}
+
+func (d *Identer) String() string {
+	return d.builder.String()
 }
