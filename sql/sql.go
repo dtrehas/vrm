@@ -107,7 +107,6 @@ var TokenMap = map[string]Token{
 }
 
 func COLUMNS(ofs ...interface{}) string {
-
 	var b strings.Builder
 	b.WriteString("(")
 
@@ -122,7 +121,6 @@ func COLUMNS(ofs ...interface{}) string {
 			cs = vrm.ColumnsOf(of.(vrm.Table))
 		case vrm.Columns, *vrm.Columns:
 			cs = of.(vrm.Columns)
-
 		}
 
 		size := len(cs)

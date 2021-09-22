@@ -87,3 +87,887 @@ group by tab.table_schema,
          tco.constraint_name
 order by tab.table_schema,
          tab.table_name
+
+
+
+----------------------------
+0
+
+I upgraded answer of @ollyc which is currently at top. I agree with @fionbio because key_column_usage and constraint_column_usage has no relative information at column level.
+
+If constraint_column_usage has ordinal_positon column like key_column_usage, it can be joined with this column. So I made a ordinal_position to constraint_column_usage as below.
+
+I cannot confirm this manually created ordinal_position is exactly in same order with key_column_usage. But I checked it is exactly same order at least in my case.
+
+SELECT
+    tc.table_schema, 
+    tc.constraint_name, 
+    tc.table_name, 
+    kcu.column_name, 
+    ccu.table_schema AS foreign_table_schema,
+    ccu.table_name AS foreign_table_name,
+    ccu.column_name AS foreign_column_name
+FROM 
+    information_schema.table_constraints AS tc 
+    JOIN information_schema.key_column_usage AS kcu
+      ON tc.constraint_name = kcu.constraint_name
+      AND tc.table_schema = kcu.table_schema
+    JOIN (select row_number() over (partition by table_schema, table_name, constraint_name order by row_num) ordinal_position,
+                 table_schema, table_name, column_name, constraint_name
+          from   (select row_number() over (order by 1) row_num, table_schema, table_name, column_name, constraint_name
+                  from   information_schema.constraint_column_usage
+                 ) t
+         ) AS ccu
+      ON ccu.constraint_name = tc.constraint_name
+      AND ccu.table_schema = tc.table_schema
+      AND ccu.ordinal_position = kcu.ordinal_position
+WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = 'mytable'
+
+------------------------------------
+
+
+249
+
+
+73
+Is there a way using SQL to list all foreign keys for a given table? I know the table name / schema and I can plug that in.
+
+sql
+postgresql
+Share
+Improve this question
+Follow
+edited Apr 29 at 19:39
+
+Flimzy
+62.8k1414 gold badges109109 silver badges150150 bronze badges
+asked Jul 20 '09 at 8:14
+
+smack0007
+10.2k77 gold badges3838 silver badges4646 bronze badges
+I suggest to use @Magnus' answer. Simplest, cleanest, fastest. – Erwin Brandstetter Oct 10 '13 at 15:04
+@ErwinBrandstetter However, the accepted answer gives columns and table names directly, so we don't need to parse them. It would be nice if Magnus' answer could do that too. – Rodrigo Jul 14 '20 at 21:00
+Add a comment
+25 Answers
+
+444
+
+You can do this via the information_schema tables. For example:
+
+SELECT
+    tc.table_schema, 
+    tc.constraint_name, 
+    tc.table_name, 
+    kcu.column_name, 
+    ccu.table_schema AS foreign_table_schema,
+    ccu.table_name AS foreign_table_name,
+    ccu.column_name AS foreign_column_name 
+FROM 
+    information_schema.table_constraints AS tc 
+    JOIN information_schema.key_column_usage AS kcu
+      ON tc.constraint_name = kcu.constraint_name
+      AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.constraint_column_usage AS ccu
+      ON ccu.constraint_name = tc.constraint_name
+      AND ccu.table_schema = tc.table_schema
+WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name='mytable';
+Share
+Improve this answer
+Follow
+edited Dec 26 '18 at 9:00
+
+Brown Bear
+17.1k88 gold badges4141 silver badges6262 bronze badges
+answered Jul 20 '09 at 8:28
+
+ollyc
+4,71111 gold badge1515 silver badges88 bronze badges
+8
+table_name='mytable' should be tc.table_name='mytable' or else it throws an ambiguous error – intrepion Jul 15 '11 at 23:50
+18
++1, very helpful. To make the query more robust it should probably join on constraint_schema as well, since it's possible for two schemas to have constraints with the same name. Something like: FROM information_schema.table_constraints AS tc JOIN information_schema.key_column_usage AS kcu USING (constraint_schema, constraint_name) JOIN information_schema.constraint_column_usage AS ccu USING (constraint_schema, constraint_name) – EMP Aug 26 '11 at 6:41
+9
+This breaks when there are several columns in a constraint, doesn't it? There seems to be no proper way to associate pk columns with fk columns using information_schema BTW. – fionbio Jun 1 '12 at 18:54
+5
+It indeed breaks with more than one column in constraint. For Postgres, there is a way of getting this information from the pg_catalog schema. See my answer below. – martin Jun 8 '12 at 14:07
+13
+The query is wrong. It assumes that constraint names cannot repeat, which is false. Constraints with the same name can exist in different namespaces. You are using constraint_name to make the join. Also joinning on both constraint_name and schema name won't work since you are not sure the two constraints are the same. The only option is going for pg_constraints, pg_class etc. using oids to join. Postgres' ANSI catalog is only there for compliance but it's flawed. pg_catalog is the way to go. The correct answer is here dba.stackexchange.com/questions/36979/retrieving-all-pk-and-fk – Tulains Córdova Nov 24 '15 at 18:18 
+Show 7 more comments
+
+Report this ad
+
+76
+
+psql does this, and if you start psql with:
+
+psql -E
+it will show you exactly what query is executed. In the case of finding foreign keys, it's:
+
+SELECT conname,
+  pg_catalog.pg_get_constraintdef(r.oid, true) as condef
+FROM pg_catalog.pg_constraint r
+WHERE r.conrelid = '16485' AND r.contype = 'f' ORDER BY 1
+In this case, 16485 is the oid of the table I'm looking at - you can get that one by just casting your tablename to regclass like:
+
+WHERE r.conrelid = 'mytable'::regclass
+Schema-qualify the table name if it's not unique (or the first in your search_path):
+
+WHERE r.conrelid = 'myschema.mytable'::regclass
+Share
+Improve this answer
+Follow
+edited Oct 10 '13 at 15:06
+
+Erwin Brandstetter
+491k112112 gold badges909909 silver badges10531053 bronze badges
+answered Jul 20 '09 at 14:56
+
+Magnus Hagander
+21.1k44 gold badges5151 silver badges4242 bronze badges
+2
+This is very handy! Postgres seems to have a million little functions like this that make everything simpler. Now how to remember them? – epic_fil Feb 6 '14 at 22:22
+5
+@Phil: You only need a general idea. Let the manual remember the rest. – Erwin Brandstetter Feb 7 '14 at 13:42
+4
+to list all foreign keys targeting a table: SELECT conname, pg_catalog.pg_get_constraintdef(r.oid, true) as condef FROM pg_catalog.pg_constraint r WHERE r.confrelid = 'myschema.mytable'::regclass; – regilero Oct 20 '15 at 12:23
+1
+@ErwinBrandstetter how do i do to get a foreign table name? – Wellington Silva Ribeiro Jul 10 '18 at 20:26
+2
+I don't get it, what command should be use ? psql -E -U username -d database ThenWHAT ? – Poutrathor Jan 17 '19 at 18:52
+Show 1 more comment
+
+69
+
+Issue \d+ tablename on PostgreSQL prompt, in addition to showing table column's data types it'll show the indexes and foreign keys.
+
+Share
+Improve this answer
+Follow
+edited Jan 18 '18 at 14:59
+
+ashawley
+3,8592424 silver badges3838 bronze badges
+answered Nov 20 '15 at 8:53
+
+Gre Hahn
+69955 silver badges33 bronze badges
+Sorry didn't notice my comment was cropped. If you could at least try it once, you'd see the foreign key mappings are displayed as well. – Gre Hahn Nov 22 '15 at 5:12
+Add a comment
+
+Report this ad
+
+52
+
+Ollyc's answer is good as it is not Postgres-specific, however, it breaks down when the foreign key references more than one column. The following query works for arbitrary number of columns but it relies heavily on Postgres extensions:
+
+select 
+    att2.attname as "child_column", 
+    cl.relname as "parent_table", 
+    att.attname as "parent_column",
+    conname
+from
+   (select 
+        unnest(con1.conkey) as "parent", 
+        unnest(con1.confkey) as "child", 
+        con1.confrelid, 
+        con1.conrelid,
+        con1.conname
+    from 
+        pg_class cl
+        join pg_namespace ns on cl.relnamespace = ns.oid
+        join pg_constraint con1 on con1.conrelid = cl.oid
+    where
+        cl.relname = 'child_table'
+        and ns.nspname = 'child_schema'
+        and con1.contype = 'f'
+   ) con
+   join pg_attribute att on
+       att.attrelid = con.confrelid and att.attnum = con.child
+   join pg_class cl on
+       cl.oid = con.confrelid
+   join pg_attribute att2 on
+       att2.attrelid = con.conrelid and att2.attnum = con.parent
+Share
+Improve this answer
+Follow
+edited Jan 25 '17 at 17:09
+answered Jun 8 '12 at 14:06
+
+martin
+2,3302222 silver badges2727 bronze badges
+before 8.4 the function unnest has to be created at first. wiki.postgresql.org/wiki/Array_Unnest – maletin Oct 4 '12 at 8:12 
+Where does one insert the table name into this query? Entered verbatim the above returns 0 rows on my PSQL DB that has tens of foreign keys. – Phrogz Mar 10 '13 at 16:33 
+4
+You replace 'child_table' and 'child_schema' with the names of the table and its schema – martin Apr 9 '13 at 10:47
+2
+I think that 'child_table' is in fact 'parent_table', because cl.relname is in the cl table which is joined over confrelid that is the referenced (parent) table. If you wanna filter on child table you should add join pg_class cl2 on cl2.oid = con.conrelid and then use cl2.relname = 'child_table'. – Teejay Aug 1 '17 at 15:38
+1
+Works as far as I can tell. – aknuds1 Jul 28 '19 at 10:29
+Show 4 more comments
+
+32
+
+Extension to ollyc recipe :
+
+CREATE VIEW foreign_keys_view AS
+SELECT
+    tc.table_name, kcu.column_name,
+    ccu.table_name AS foreign_table_name,
+    ccu.column_name AS foreign_column_name
+FROM
+    information_schema.table_constraints AS tc
+    JOIN information_schema.key_column_usage 
+        AS kcu ON tc.constraint_name = kcu.constraint_name
+    JOIN information_schema.constraint_column_usage 
+        AS ccu ON ccu.constraint_name = tc.constraint_name
+WHERE constraint_type = 'FOREIGN KEY';
+Then:
+
+SELECT * FROM foreign_keys_view WHERE table_name='YourTableNameHere';
+
+Share
+Improve this answer
+Follow
+edited Sep 18 '14 at 21:59
+
+Gili
+77.4k8585 gold badges346346 silver badges630630 bronze badges
+answered Jul 29 '11 at 7:56
+
+Mvoicem
+42155 silver badges55 bronze badges
+Thanks, ideal for reusing. – schellingerht Feb 3 '17 at 18:55
+Add a comment
+
+21
+
+check the ff post for your solution and don't forget to mark this when you fine this helpful
+
+http://errorbank.blogspot.com/2011/03/list-all-foreign-keys-references-for.html
+
+SELECT
+  o.conname AS constraint_name,
+  (SELECT nspname FROM pg_namespace WHERE oid=m.relnamespace) AS source_schema,
+  m.relname AS source_table,
+  (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = m.oid AND a.attnum = o.conkey[1] AND a.attisdropped = false) AS source_column,
+  (SELECT nspname FROM pg_namespace WHERE oid=f.relnamespace) AS target_schema,
+  f.relname AS target_table,
+  (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = f.oid AND a.attnum = o.confkey[1] AND a.attisdropped = false) AS target_column
+FROM
+  pg_constraint o LEFT JOIN pg_class f ON f.oid = o.confrelid LEFT JOIN pg_class m ON m.oid = o.conrelid
+WHERE
+  o.contype = 'f' AND o.conrelid IN (SELECT oid FROM pg_class c WHERE c.relkind = 'r');
+Share
+Improve this answer
+Follow
+edited Jul 5 '18 at 5:56
+
+KbiR
+3,57122 gold badges2828 silver badges7979 bronze badges
+answered Mar 30 '11 at 17:47
+
+sheldon
+21122 silver badges22 bronze badges
+Offers two SQLs that work on PostgreSQL 9.1 (once you correct the wrong escaping put your 'tablename' (without schema-prefix) into the SQL). – alfonx Jun 14 '12 at 23:59
+2
++1 : this is the only solution that does not return duplicates. – Olivier MATROT Nov 13 '12 at 7:33
+to this solution, works fine and not return duplicates. – Fuhrmann Aug 5 '15 at 13:50
+2
+This solution will only show the first column of any multi-column foreign keys... but looks so much simpler than the one I just posted that will do multiples. – dewin Apr 22 '16 at 17:38
+Add a comment
+
+17
+
+This query works correct with composite keys also:
+
+select c.constraint_name
+    , x.table_schema as schema_name
+    , x.table_name
+    , x.column_name
+    , y.table_schema as foreign_schema_name
+    , y.table_name as foreign_table_name
+    , y.column_name as foreign_column_name
+from information_schema.referential_constraints c
+join information_schema.key_column_usage x
+    on x.constraint_name = c.constraint_name
+join information_schema.key_column_usage y
+    on y.ordinal_position = x.position_in_unique_constraint
+    and y.constraint_name = c.unique_constraint_name
+order by c.constraint_name, x.ordinal_position
+Share
+Improve this answer
+Follow
+answered Jun 18 '13 at 8:56
+
+oscavi
+17011 silver badge44 bronze badges
+2
+You're joining the columns on "constraint_name", so this will only work if all of your constraint names are unique (across all tables in all schemas). This is not usually a requirement, and thus not enforced by the database. – Zilk Sep 11 '13 at 17:33
+4
+Thanks. This is the only answer that shows how to use information_schema to properly handle multiple columns. – Samuel Danielson Mar 1 '17 at 9:14
+2
+This solution works. It doesn't produce duplicates and it handles multiple fields in the FK. – Igor Jul 29 '17 at 17:39
+Add a comment
+
+16
+
+short but sweet upvote if it works for you.
+
+select  * from information_schema.key_column_usage where constraint_catalog=current_catalog and table_name='your_table_name' and position_in_unique_constraint notnull;
+Share
+Improve this answer
+Follow
+edited May 26 '20 at 12:51
+answered Oct 5 '18 at 7:04
+
+NikhilP
+1,1951010 silver badges2222 bronze badges
+Worked a charm as I write with PG 12.2 – Jack Kinsella May 27 '20 at 10:20
+Add a comment
+
+10
+
+I think what you were looking for and very close to what @ollyc wrote is this:
+
+SELECT
+tc.constraint_name, tc.table_name, kcu.column_name, 
+ccu.table_name AS foreign_table_name,
+ccu.column_name AS foreign_column_name 
+FROM 
+information_schema.table_constraints AS tc 
+JOIN information_schema.key_column_usage AS kcu
+  ON tc.constraint_name = kcu.constraint_name
+JOIN information_schema.constraint_column_usage AS ccu
+  ON ccu.constraint_name = tc.constraint_name
+WHERE constraint_type = 'FOREIGN KEY' AND ccu.table_name='YourTableNameHere';
+This will list all the tables that use your specified table as a foreign key
+
+Share
+Improve this answer
+Follow
+edited Jan 23 '17 at 16:43
+
+Evan Carroll
+65.8k4040 gold badges214214 silver badges360360 bronze badges
+answered Dec 10 '13 at 22:53
+
+Shaun McCready
+65166 silver badges1313 bronze badges
+Add a comment
+
+7
+
+One another way:
+
+WITH foreign_keys AS (
+    SELECT
+      conname,
+      conrelid,
+      confrelid,
+      unnest(conkey)  AS conkey,
+      unnest(confkey) AS confkey
+    FROM pg_constraint
+    WHERE contype = 'f' -- AND confrelid::regclass = 'your_table'::regclass
+)
+-- if confrelid, conname pair shows up more than once then it is multicolumn foreign key
+SELECT fk.conname as constraint_name,
+       fk.confrelid::regclass as referenced_table, af.attname as pkcol,
+       fk.conrelid::regclass as referencing_table, a.attname as fkcol
+FROM foreign_keys fk
+JOIN pg_attribute af ON af.attnum = fk.confkey AND af.attrelid = fk.confrelid
+JOIN pg_attribute a ON a.attnum = conkey AND a.attrelid = fk.conrelid
+ORDER BY fk.confrelid, fk.conname
+;
+Share
+Improve this answer
+Follow
+answered Nov 23 '17 at 8:44
+
+Konrad Perzyna
+20133 silver badges44 bronze badges
+Add a comment
+
+5
+
+None of the existing answers gave me results in the form that I actually wanted them in. So here is my (gargantuan) query for finding information about foreign keys.
+
+A few notes:
+
+The expressions used to generate from_cols and to_cols could be vastly simplified on Postgres 9.4 and later using WITH ORDINALITY rather than the window-function-using hackery I'm using.
+Those same expressions are relying on the query planner not altering the returned order of results from UNNEST. I don't think it will, but I don't have any multiple-column foreign keys in my dataset to test with. Adding the 9.4 niceties eliminates this possibility altogether.
+The query itself requires Postgres 9.0 or later (8.x didn't allow ORDER BY in aggregate functions)
+Replace STRING_AGG with ARRAY_AGG if you want an array of columns rather than a comma-separated string.
+-
+
+SELECT
+    c.conname AS constraint_name,
+    (SELECT n.nspname FROM pg_namespace AS n WHERE n.oid=c.connamespace) AS constraint_schema,
+
+    tf.name AS from_table,
+    (
+        SELECT STRING_AGG(QUOTE_IDENT(a.attname), ', ' ORDER BY t.seq)
+        FROM
+            (
+                SELECT
+                    ROW_NUMBER() OVER (ROWS UNBOUNDED PRECEDING) AS seq,
+                    attnum
+                FROM
+                    UNNEST(c.conkey) AS t(attnum)
+            ) AS t
+            INNER JOIN pg_attribute AS a ON a.attrelid=c.conrelid AND a.attnum=t.attnum
+    ) AS from_cols,
+
+    tt.name AS to_table,
+    (
+        SELECT STRING_AGG(QUOTE_IDENT(a.attname), ', ' ORDER BY t.seq)
+        FROM
+            (
+                SELECT
+                    ROW_NUMBER() OVER (ROWS UNBOUNDED PRECEDING) AS seq,
+                    attnum
+                FROM
+                    UNNEST(c.confkey) AS t(attnum)
+            ) AS t
+            INNER JOIN pg_attribute AS a ON a.attrelid=c.confrelid AND a.attnum=t.attnum
+    ) AS to_cols,
+
+    CASE confupdtype WHEN 'r' THEN 'restrict' WHEN 'c' THEN 'cascade' WHEN 'n' THEN 'set null' WHEN 'd' THEN 'set default' WHEN 'a' THEN 'no action' ELSE NULL END AS on_update,
+    CASE confdeltype WHEN 'r' THEN 'restrict' WHEN 'c' THEN 'cascade' WHEN 'n' THEN 'set null' WHEN 'd' THEN 'set default' WHEN 'a' THEN 'no action' ELSE NULL END AS on_delete,
+    CASE confmatchtype::text WHEN 'f' THEN 'full' WHEN 'p' THEN 'partial' WHEN 'u' THEN 'simple' WHEN 's' THEN 'simple' ELSE NULL END AS match_type,  -- In earlier postgres docs, simple was 'u'nspecified, but current versions use 's'imple.  text cast is required.
+
+    pg_catalog.pg_get_constraintdef(c.oid, true) as condef
+FROM
+    pg_catalog.pg_constraint AS c
+    INNER JOIN (
+        SELECT pg_class.oid, QUOTE_IDENT(pg_namespace.nspname) || '.' || QUOTE_IDENT(pg_class.relname) AS name
+        FROM pg_class INNER JOIN pg_namespace ON pg_class.relnamespace=pg_namespace.oid
+    ) AS tf ON tf.oid=c.conrelid
+    INNER JOIN (
+        SELECT pg_class.oid, QUOTE_IDENT(pg_namespace.nspname) || '.' || QUOTE_IDENT(pg_class.relname) AS name
+        FROM pg_class INNER JOIN pg_namespace ON pg_class.relnamespace=pg_namespace.oid
+    ) AS tt ON tt.oid=c.confrelid
+WHERE c.contype = 'f' ORDER BY 1;
+Share
+Improve this answer
+Follow
+answered Apr 22 '16 at 17:34
+
+dewin
+15111 silver badge33 bronze badges
+Add a comment
+
+5
+
+Proper solution to the problem, using information_schema, working with multi column keys, joining columns of different names in both tables correctly and also compatible with ms sqlsever:
+
+select fks.TABLE_NAME as foreign_key_table_name
+, fks.CONSTRAINT_NAME as foreign_key_constraint_name
+, kcu_foreign.COLUMN_NAME as foreign_key_column_name
+, rc.UNIQUE_CONSTRAINT_NAME as primary_key_constraint_name
+, pks.TABLE_NAME as primary_key_table_name
+, kcu_primary.COLUMN_NAME as primary_key_column_name
+from INFORMATION_SCHEMA.TABLE_CONSTRAINTS fks -- foreign keys
+inner join INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu_foreign -- the columns of the above keys
+    on fks.TABLE_CATALOG = kcu_foreign.TABLE_CATALOG
+    and fks.TABLE_SCHEMA = kcu_foreign.TABLE_SCHEMA
+    and fks.TABLE_NAME = kcu_foreign.TABLE_NAME
+    and fks.CONSTRAINT_NAME = kcu_foreign.CONSTRAINT_NAME
+inner join INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc -- referenced constraints
+    on rc.CONSTRAINT_CATALOG = fks.CONSTRAINT_CATALOG
+    and rc.CONSTRAINT_SCHEMA = fks.CONSTRAINT_SCHEMA
+    and rc.CONSTRAINT_NAME = fks.CONSTRAINT_NAME
+inner join INFORMATION_SCHEMA.TABLE_CONSTRAINTS pks -- primary keys (referenced by fks)
+    on rc.UNIQUE_CONSTRAINT_CATALOG = pks.CONSTRAINT_CATALOG
+    and rc.UNIQUE_CONSTRAINT_SCHEMA = pks.CONSTRAINT_SCHEMA
+    and rc.UNIQUE_CONSTRAINT_NAME = pks.CONSTRAINT_NAME
+inner join INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu_primary
+    on pks.TABLE_CATALOG = kcu_primary.TABLE_CATALOG
+    and pks.TABLE_SCHEMA = kcu_primary.TABLE_SCHEMA
+    and pks.TABLE_NAME = kcu_primary.TABLE_NAME
+    and pks.CONSTRAINT_NAME = kcu_primary.CONSTRAINT_NAME
+    and kcu_foreign.ORDINAL_POSITION = kcu_primary.ORDINAL_POSITION -- this joins the columns
+where fks.TABLE_SCHEMA = 'dbo' -- replace with schema name
+and fks.TABLE_NAME = 'your_table_name' -- replace with table name
+and fks.CONSTRAINT_TYPE = 'FOREIGN KEY'
+and pks.CONSTRAINT_TYPE = 'PRIMARY KEY'
+order by fks.constraint_name, kcu_foreign.ORDINAL_POSITION
+Note: There are some differences between potgresql and sqlserver implementations of information_schema which make the top answer give different results on the two systems - one shows column names for the foreign key table the other for the primary key table. For this reason I decided to use KEY_COLUMN_USAGE view instead.
+
+Share
+Improve this answer
+Follow
+answered Feb 16 '18 at 10:23
+
+jakubiszon
+2,12611 gold badge2121 silver badges3535 bronze badges
+The information schema seems like the right answer, but really you want the pg_catalog tables: pg_constraint etc. We got bitten hard by this. if your database has large amounts of constraints there can be performance issues... – hajikelist Mar 16 '18 at 3:03
+1
+The above condition on ORDINAL_POSITION can yield incorrect result when the order of columns in foreign key is different from the order of columns in the unique constraint. I believe you should have joined on kcu_foreign.POSITION_IN_UNIQUE_CONSTRAINT = kcu_primary.ORDINAL_POSITION Update: Also, a foreign key may depend on a UNIQUE constraint as well, so I think you should remove the pks.CONSTRAINT_TYPE condition and can just join rc to kcu_primary directly – easd Jun 9 '20 at 11:06 
+I have made a similar answer here: stackoverflow.com/a/62260908/9093051 – easd Jun 9 '20 at 11:12
+Add a comment
+
+5
+
+You can use the PostgreSQL system catalogs. Maybe you can query pg_constraint to ask for foreign keys. You can also use the Information Schema
+
+Share
+Improve this answer
+Follow
+edited May 26 '20 at 12:55
+
+a_horse_with_no_name
+453k8181 gold badges702702 silver badges777777 bronze badges
+answered Jul 20 '09 at 8:18
+
+Guido
+42.7k2424 gold badges114114 silver badges168168 bronze badges
+Add a comment
+
+4
+
+Use the name of the Primary Key to which the Keys are referencing and query the information_schema:
+
+select table_name, column_name
+from information_schema.key_column_usage
+where constraint_name IN (select constraint_name
+  from information_schema.referential_constraints 
+  where unique_constraint_name = 'TABLE_NAME_pkey')
+Here 'TABLE_NAME_pkey' is the name of the Primary Key referenced by the Foreign Keys.
+
+Share
+Improve this answer
+Follow
+answered Dec 13 '10 at 9:13
+
+markmnl
+10.1k88 gold badges6767 silver badges102102 bronze badges
+Add a comment
+
+4
+
+Here is a solution by Andreas Joseph Krogh from the PostgreSQL mailing list: http://www.postgresql.org/message-id/200811072134.44750.andreak@officenet.no
+
+SELECT source_table::regclass, source_attr.attname AS source_column,
+    target_table::regclass, target_attr.attname AS target_column
+FROM pg_attribute target_attr, pg_attribute source_attr,
+  (SELECT source_table, target_table, source_constraints[i] source_constraints, target_constraints[i] AS target_constraints
+   FROM
+     (SELECT conrelid as source_table, confrelid AS target_table, conkey AS source_constraints, confkey AS target_constraints,
+       generate_series(1, array_upper(conkey, 1)) AS i
+      FROM pg_constraint
+      WHERE contype = 'f'
+     ) query1
+  ) query2
+WHERE target_attr.attnum = target_constraints AND target_attr.attrelid = target_table AND
+      source_attr.attnum = source_constraints AND source_attr.attrelid = source_table;
+This solution handles foreign keys that reference multiple columns, and avoids duplicates (which some of the other answers fail to do). The only thing I changed were the variable names.
+
+Here is an example that returns all employee columns that reference the permission table:
+
+SELECT source_column
+FROM foreign_keys
+WHERE source_table = 'employee'::regclass AND target_table = 'permission'::regclass;
+Share
+Improve this answer
+Follow
+edited Sep 19 '14 at 3:25
+answered Sep 19 '14 at 3:09
+
+Gili
+77.4k8585 gold badges346346 silver badges630630 bronze badges
+Add a comment
+
+4
+
+To expand upon Martin's excellent answer here is a query that lets you filter based on the parent table and shows you the name of the child table with each parent table so you can see all of the dependent tables/columns based upon the foreign key constraints in the parent table.
+
+select 
+    con.constraint_name,
+    att2.attname as "child_column", 
+    cl.relname as "parent_table", 
+    att.attname as "parent_column",
+    con.child_table,
+    con.child_schema
+from
+   (select 
+        unnest(con1.conkey) as "parent", 
+        unnest(con1.confkey) as "child", 
+        con1.conname as constraint_name,
+        con1.confrelid, 
+        con1.conrelid,
+        cl.relname as child_table,
+        ns.nspname as child_schema
+    from 
+        pg_class cl
+        join pg_namespace ns on cl.relnamespace = ns.oid
+        join pg_constraint con1 on con1.conrelid = cl.oid
+    where  con1.contype = 'f'
+   ) con
+   join pg_attribute att on
+       att.attrelid = con.confrelid and att.attnum = con.child
+   join pg_class cl on
+       cl.oid = con.confrelid
+   join pg_attribute att2 on
+       att2.attrelid = con.conrelid and att2.attnum = con.parent
+   where cl.relname like '%parent_table%'       
+Share
+Improve this answer
+Follow
+edited May 11 '15 at 22:10
+answered May 11 '15 at 22:00
+
+Cervo
+3,13211 gold badge2121 silver badges2727 bronze badges
+1
+The query in the accepted answer adds 1.2 secs to a ~ 0.03 query, yours adds only 0.01, thanks! – AVProgrammer Jan 6 '17 at 19:00
+Add a comment
+
+3
+
+SELECT r.conname
+      ,ct.table_name
+      ,pg_catalog.pg_get_constraintdef(r.oid, true) as condef
+  FROM pg_catalog.pg_constraint r, information_schema.constraint_table_usage ct
+ WHERE r.contype = 'f' 
+   AND r.conname = ct.constraint_name
+ ORDER BY 1
+Share
+Improve this answer
+Follow
+edited Dec 11 '11 at 4:01
+
+Erwin Brandstetter
+491k112112 gold badges909909 silver badges10531053 bronze badges
+answered Jan 15 '11 at 19:37
+
+Pugazendhi Asaimuthu
+3111 bronze badge
+Add a comment
+
+2
+
+I created little tool to query and then compare database schema: Dump PostgreSQL db schema to text
+
+There is info about FK, but ollyc response gives more details.
+
+Share
+Improve this answer
+Follow
+answered Jul 21 '09 at 5:27
+
+Michał Niklas
+49.2k1616 gold badges6363 silver badges103103 bronze badges
+Add a comment
+
+2
+
+I wrote a solution that like and use frequently. The code is at http://code.google.com/p/pgutils/. See the pgutils.foreign_keys view.
+
+Unfortunately, the output is too wordy to include here. However, you can try it on a public version of the database here, like this:
+
+$ psql -h unison-db.org -U PUBLIC -d unison -c 'select * from pgutils.foreign_keys;
+This works with 8.3 at least. I anticipate updating it, if needed, in the next few months.
+
+-Reece
+
+Share
+Improve this answer
+Follow
+edited Aug 29 '14 at 17:32
+answered Mar 2 '11 at 4:33
+
+Reece
+5,99144 gold badges2424 silver badges4242 bronze badges
+1
+Project link is now dead. – pimlottc Sep 9 '14 at 0:53
+@pimlottc: Moved to bitbucket.org/reece/pgutils. Thanks for pointing this out. – Reece Sep 27 '14 at 23:59
+Add a comment
+
+2
+
+This is what I'm currently using, it will list a table and it's fkey constraints [remove table clause and it will list all tables in current catalog]:
+
+SELECT
+
+    current_schema() AS "schema",
+    current_catalog AS "database",
+    "pg_constraint".conrelid::regclass::text AS "primary_table_name",
+    "pg_constraint".confrelid::regclass::text AS "foreign_table_name",
+
+    (
+        string_to_array(
+            (
+                string_to_array(
+                    pg_get_constraintdef("pg_constraint".oid),
+                    '('
+                )
+            )[2],
+            ')'
+        )
+    )[1] AS "foreign_column_name",
+
+    "pg_constraint".conindid::regclass::text AS "constraint_name",
+
+    TRIM((
+        string_to_array(
+            pg_get_constraintdef("pg_constraint".oid),
+            '('
+        )
+    )[1]) AS "constraint_type",
+
+    pg_get_constraintdef("pg_constraint".oid) AS "constraint_definition"
+
+FROM pg_constraint AS "pg_constraint"
+
+JOIN pg_namespace AS "pg_namespace" ON "pg_namespace".oid = "pg_constraint".connamespace
+
+WHERE
+    --fkey and pkey constraints
+    "pg_constraint".contype IN ( 'f', 'p' )
+    AND
+    "pg_namespace".nspname = current_schema()
+    AND
+    "pg_constraint".conrelid::regclass::text IN ('whatever_table_name')
+Share
+Improve this answer
+Follow
+answered Mar 16 '18 at 3:01
+
+hajikelist
+1,00088 silver badges99 bronze badges
+Add a comment
+
+2
+
+ SELECT 
+    conrelid::regclass AS table_from,
+    conname,
+    pg_get_constraintdef(oid) as condef    
+    FROM pg_catalog.pg_constraint r
+will also work for all constraints. E.g. with pysql: enter image description here
+
+Share
+Improve this answer
+Follow
+answered Dec 16 '20 at 21:14
+
+ntg
+9,45166 gold badges5050 silver badges7373 bronze badges
+Add a comment
+
+0
+
+Note: Do not forget column's order while reading constraint columns!
+
+SELECT conname, attname
+  FROM pg_catalog.pg_constraint c 
+  JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+ WHERE attrelid = 'schema.table_name'::regclass
+ ORDER BY conname, array_position(c.conkey, a.attnum)
+Share
+Improve this answer
+Follow
+answered Jul 4 '17 at 14:48
+
+Nashev
+39644 silver badges77 bronze badges
+Add a comment
+
+0
+
+the fastest to verify straight in bash answer based entirely on this answer
+
+IFS='' read -r -d '' sql_code << EOF_SQL_CODE
+      SELECT
+      o.oid
+      , o.conname AS constraint_name
+      , (SELECT nspname FROM pg_namespace WHERE oid=m.relnamespace) AS source_schema
+      , m.relname AS source_table
+      , (SELECT a.attname FROM pg_attribute a
+      WHERE a.attrelid = m.oid AND a.attnum = o.conkey[1] AND a.attisdropped = false) AS source_column
+      , (SELECT nspname FROM pg_namespace
+      WHERE oid=f.relnamespace) AS target_schema
+      , f.relname AS target_table
+      , (SELECT a.attname FROM pg_attribute a
+      WHERE a.attrelid = f.oid AND a.attnum = o.confkey[1] AND a.attisdropped = false) AS target_column
+      , ROW_NUMBER () OVER (ORDER BY o.oid) as rowid
+      FROM pg_constraint o
+      LEFT JOIN pg_class f ON f.oid = o.confrelid
+      LEFT JOIN pg_class m ON m.oid = o.conrelid
+      WHERE 1=1
+      AND o.contype = 'f'
+      AND o.conrelid IN (SELECT oid FROM pg_class c WHERE c.relkind = 'r')
+EOF_SQL_CODE
+
+psql -d my_db -c "$sql_code"
+Share
+Improve this answer
+Follow
+answered May 14 '20 at 19:08
+
+Yordan Georgiev
+4,19011 gold badge4343 silver badges5050 bronze badges
+Add a comment
+
+0
+
+Where $1 ('my_schema') is the schema and $2 ('my_table') is the name of the table:
+
+SELECT ss.conname constraint_name, a.attname column_name, ss.refnamespace fk_table_schema, ss.reflname fk_table_name, af.attname fk_column_name
+    FROM  pg_attribute a, pg_attribute af,
+        (SELECT r.oid roid, c.conname, rf.relname reflname, information_schema._pg_expandarray(c.conkey) x,
+                nrf.nspname refnamespace, rf.oid rfoid, information_schema._pg_expandarray(cf.confkey) xf
+            FROM pg_namespace nr, pg_class r, pg_constraint c,
+                pg_namespace nrf, pg_class rf, pg_constraint cf
+            WHERE nr.oid = r.relnamespace
+                AND r.oid = c.conrelid
+                AND rf.oid = cf.confrelid
+                AND c.conname = cf.conname
+                AND nrf.oid = rf.relnamespace
+                AND nr.nspname = $1
+                AND r.relname = $2) ss
+    WHERE ss.roid = a.attrelid AND a.attnum = (ss.x).x AND NOT a.attisdropped
+        AND ss.rfoid = af.attrelid AND af.attnum = (ss.xf).x AND NOT af.attisdropped
+    ORDER BY ss.conname, a.attname;
+Share
+Improve this answer
+Follow
+edited Aug 26 '20 at 13:05
+answered Aug 21 '20 at 1:22
+
+Martin.Bof
+4644 bronze badges
+Add a comment
+
+0
+
+I upgraded answer of @ollyc which is currently at top. I agree with @fionbio because key_column_usage and constraint_column_usage has no relative information at column level.
+
+If constraint_column_usage has ordinal_positon column like key_column_usage, it can be joined with this column. So I made a ordinal_position to constraint_column_usage as below.
+
+I cannot confirm this manually created ordinal_position is exactly in same order with key_column_usage. But I checked it is exactly same order at least in my case.
+
+SELECT
+    tc.table_schema, 
+    tc.constraint_name, 
+    tc.table_name, 
+    kcu.column_name, 
+    ccu.table_schema AS foreign_table_schema,
+    ccu.table_name AS foreign_table_name,
+    ccu.column_name AS foreign_column_name
+FROM 
+    information_schema.table_constraints AS tc 
+    JOIN information_schema.key_column_usage AS kcu
+      ON tc.constraint_name = kcu.constraint_name
+      AND tc.table_schema = kcu.table_schema
+    JOIN (select row_number() over (partition by table_schema, table_name, constraint_name order by row_num) ordinal_position,
+                 table_schema, table_name, column_name, constraint_name
+          from   (select row_number() over (order by 1) row_num, table_schema, table_name, column_name, constraint_name
+                  from   information_schema.constraint_column_usage
+                 ) t
+         ) AS ccu
+      ON ccu.constraint_name = tc.constraint_name
+      AND ccu.table_schema = tc.table_schema
+      AND ccu.ordinal_position = kcu.ordinal_position
+WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = 'mytable'
+Share

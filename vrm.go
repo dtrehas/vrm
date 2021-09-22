@@ -28,10 +28,19 @@ type Quexecer interface {
 	QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row
 	SendBatch(context.Context, *pgx.Batch) pgx.BatchResults
 	Exec(ctx context.Context, sql string, arguments ...interface{}) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
+	//	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 }
 
 type Batch interface {
 	Queue(query string, args ...interface{})
+}
+
+func BatchResultsClose(results pgx.BatchResults) error {
+	if results != nil {
+		return results.Close()
+	}
+	return nil
 }
 
 // Stringer is implemented by any value that has a String method,

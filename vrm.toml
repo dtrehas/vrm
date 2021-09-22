@@ -1,7 +1,7 @@
 [example_db]
     wipe = true
     auto-timestamp = true
-    models-path = "cd ../."
+    models-path = "../."
     #database connection settings
     dbname = "exampleDB"
     host = "localhost"

@@ -258,6 +258,22 @@ func EscapedColumns(separator string, columns []*vrm.Column) string {
 	return b.String()
 }
 
+//EscapedColumnsAndVariableNums creates a part of sql script useful for updates or insertions
+//		e.g. in an sql update a part of:
+// 		sql=$1, email=$2, name=$3,
+//		can be costructed:
+//
+//		EscapedColumnsAndVariableNums(", ", columns)
+//
+//		For argument starting with 3
+//		sql=$3, email=$4, name=$5,
+//		EscapedColumnsAndVariableNums(", ", columns, 3)
+//
+//		For argument starting with 3 and having a modifier on the right part of the columns: e.g. New
+//		sqlNew=$3, emailNew=$4, nameNew=$5,
+//		EscapedColumnsAndVariableNums(", ", columns, 3,"New")
+//		or
+//		EscapedColumnsAndVariableNums(", ", columns,"New ","3") the order of modifiers does not matter
 func EscapedColumnsAndVariableNums(separator string, columns []*vrm.Column, args ...interface{}) string {
 	var b strings.Builder
 
@@ -307,6 +323,21 @@ func PrimaryKeyOrUniqueConstraints(allConstraints []*ConstraintInf) []*Constrain
 	}
 	return filtered
 }
+func PrimaryKeyConstraints(allConstraints []*ConstraintInf) []*ConstraintInf {
+	if allConstraints == nil {
+		return nil
+	}
+
+	var filtered []*ConstraintInf
+
+	for _, constraint := range allConstraints {
+		switch strings.ToUpper(constraint.Type) {
+		case "PRIMARY KEY":
+			filtered = append(filtered, constraint)
+		}
+	}
+	return filtered
+}
 
 func NoPrimaryKeyNorUniqueConstraints(allConstraints []*ConstraintInf) []*ConstraintInf {
 	if allConstraints == nil {
@@ -349,6 +380,100 @@ outer:
 	return filtered
 }
 
+func NoCreatedAtModifiedAtColumnFilter(columns []*vrm.Column) []*vrm.Column {
+	if columns == nil {
+		return nil
+	}
+
+	var filtered []*vrm.Column
+
+	for _, col := range columns {
+
+		if col.Name == "created_at" || col.Name == "modified_at" {
+			continue
+		}
+		filtered = append(filtered, col)
+	}
+	return filtered
+}
+
+func ColumnsDifference(columns []*vrm.Column, columnsToExclude ...string) []*vrm.Column {
+	if columns == nil {
+		return nil
+	}
+
+	var filtered []*vrm.Column
+next_column:
+	for _, col := range columns {
+		for _, exclude := range columnsToExclude {
+			if col.Name == exclude {
+				continue next_column
+			}
+		}
+		filtered = append(filtered, col)
+	}
+	return filtered
+}
+
+func ColumnsIntersection(columns []*vrm.Column, columnsToInclude ...string) []*vrm.Column {
+	if columns == nil {
+		return nil
+	}
+
+	var filtered []*vrm.Column
+
+outer:
+	for _, include := range columnsToInclude {
+		for _, col := range columns {
+			if include == col.Name {
+				filtered = append(filtered, col)
+				continue outer
+			}
+		}
+
+	}
+	return filtered
+}
+
+func PushColumnsToTheEnd(columns []*vrm.Column, columnsToTheEnd ...string) []*vrm.Column {
+	return append(ColumnsDifference(columns, columnsToTheEnd...),
+		ColumnsIntersection(columns, columnsToTheEnd...)...)
+}
+
+func ColumnsExist(allColumns []*vrm.Column, columnsToCheck ...string) bool {
+	if allColumns == nil {
+		return false
+	}
+
+outer:
+	for _, col2 := range columnsToCheck {
+
+		for _, col := range allColumns {
+			if col.Name == col2 {
+				continue outer
+			}
+		}
+		return false
+	}
+	return true
+}
+
+func NoCreatedAtColumnFilter(columns []*vrm.Column) []*vrm.Column {
+	if columns == nil {
+		return nil
+	}
+
+	var filtered []*vrm.Column
+
+	for _, col := range columns {
+		if col.Name == "created_at" {
+			continue
+		}
+		filtered = append(filtered, col)
+	}
+	return filtered
+}
+
 type Identer struct {
 	ident            string
 	accumulatedIdent []string
@@ -357,7 +482,7 @@ type Identer struct {
 
 func (d *Identer) Nl(times ...int) *Identer {
 
-	if times == nil || len(times) == 0 {
+	if len(times) == 0 {
 		d.builder.WriteString("\n")
 	} else {
 		for i := 0; i < times[0]; i++ {
@@ -387,7 +512,7 @@ func (d *Identer) Buf(buf []byte) *Identer {
 }
 
 func (d *Identer) MoreIdent(ident string, times ...int) *Identer {
-	if times == nil || len(times) == 0 {
+	if len(times) == 0 {
 		d.accumulatedIdent = append(d.accumulatedIdent, ident)
 	} else {
 		newIdent := &strings.Builder{}

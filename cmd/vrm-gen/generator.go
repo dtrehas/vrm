@@ -43,7 +43,6 @@ func initArguments() {
 }
 
 func printArgHelp() {
-
 	_, file := path.Split(os.Args[0])
 
 	fmt.Printf("Usage: %v section\n", file)
@@ -64,10 +63,6 @@ func main() {
 
 	//Add congifuration options from extra program arguments like --wipe etc.
 	parseArgs(&conf)
-
-	if conf.sql != "" {
-
-	}
 
 	//+Retrieve the configuration profile from {executable-name}.toml
 	//+named by the first argument after binary name
@@ -206,13 +201,12 @@ func parseArgs(conf *Config) {
 			conf.Wipe = true
 		case "--auto-timestamp":
 			conf.AutoTimestamps = true
-		case "-c":
+		case "-i":
 			isInputPath = true
 		case "-sql":
 			if i < len(args)-1 {
 				conf.sql = args[i+1]
 			}
-
 		default:
 			conf.name = arg
 		}
@@ -357,39 +351,111 @@ func genStruct(variables Variables, conf *Config, file *os.File) {
 
 }
 
+func genNowDeclaration(conf *Config, d *Identer, columns []*vrm.Column) *Identer {
+	if conf.AutoTimestamps && ColumnsIntersection(columns, "created_at", "updated_at") != nil {
+		d.S("now := time.Now()").Nl(2)
+	}
+	return d
+}
+
+func genInsertFuncArgsCode(conf *Config, d *Identer, columns []*vrm.Column) *Identer {
+
+	insertFuncColumns := NonSerialIdColumns(columns)
+	if conf.AutoTimestamps {
+		insertFuncColumns = ColumnsDifference(insertFuncColumns, "created_at", "updated_at")
+	}
+	// If there are table columns left we need to add a comma
+	if len(insertFuncColumns) != 0 {
+		d.S(", ")
+	}
+
+	d.S(VariablesAndTypes(",\n\t\t", insertFuncColumns))
+	return d
+}
+
+func genInsertFuncBodyStartCode(conf *Config, d *Identer, tableName string, columns []*vrm.Column) *Identer {
+
+	d.S("sql := `INSERT INTO ")
+
+	insertColumns := NonSerialIdColumns(columns)
+
+	if conf.AutoTimestamps {
+		insertColumns = PushColumnsToTheEnd(insertColumns, "created_at", "updated_at")
+	}
+
+	d.S(tableName).S("(").S(EscapedColumns(",", insertColumns))
+	d.S(") VALUES (").S(VariableDollarNums(",", insertColumns))
+
+	serialId := SerialId(columns)
+
+	if serialId != nil {
+		d.S(") RETURNING ").S(serialId.Name).S(";`").Nl(2)
+	} else {
+		d.S(");`").Nl(2)
+	}
+	return d
+}
+
+func genInsertFuncDbArgsCode(conf *Config, d *Identer, columns []*vrm.Column, args ...string) *Identer {
+	prefix := ""
+
+	if len(args) == 1 {
+		prefix = args[0]
+	}
+
+	insertDBColumns := NonSerialIdColumns(columns)
+
+	if conf.AutoTimestamps {
+		insertDBColumns = ColumnsDifference(insertDBColumns, "created_at", "updated_at")
+	} else {
+		PushColumnsToTheEnd(insertDBColumns, "created_at", "updated_at")
+	}
+
+	timestampColumns := ColumnsIntersection(columns, "created_at", "updated_at")
+
+	if len(insertDBColumns) != 0 {
+		d.S(", ")
+		d.S(VariableNames(" ,", insertDBColumns, prefix, ""))
+		if len(args)==0{ // it there a t. meaning calling db args for a struct we need to include the now
+			d.S(strings.Repeat(", now", len(timestampColumns)))
+		}
+		
+	}
+	return d
+}
+
 func genInsertStatements(variables Variables, conf *Config, file *os.File) {
 	d := &Identer{}
 
-	columns := variables["Columns"].([]*vrm.Column)
-	nonSerialIdColumns := NonSerialIdColumns(columns)
-	variablesAndTypes := VariablesAndTypes(",\n\t\t", nonSerialIdColumns)
 	camelCaseTable := variables["CamelCaseTable"].(string)
 	table := variables["Table"].(string)
+	columns := variables["Columns"].([]*vrm.Column)
 	serialId := SerialId(columns)
 
-	d.S("func Insert").S(camelCaseTable).S(" (ctx context.Context, conn vrm.Quexecer, ").S(variablesAndTypes).R(')')
+	d.S("func Insert").S(camelCaseTable).S(" (ctx context.Context, conn vrm.Quexecer")
+	genInsertFuncArgsCode(conf, d, columns).R(')')
 
 	if serialId != nil {
-		d.R('(').S(VariableAndType(serialId)).S(", err error) {").MoreIdent(Tab).Nl()
-		d.S("sql := `INSERT INTO ").
-			S(table).R(' ').S(EscapedColumns(",", nonSerialIdColumns)).
-			S(" VALUES (").S(VariableDollarNums(",", nonSerialIdColumns)).
-			S(") RETURNING ").S(serialId.Name).S(";`").Nl(2)
-
-		d.S("row := conn.QueryRow(ctx, sql, " + VariableNames(",\n\t\t", nonSerialIdColumns)).S(")").Nl()
-
-		d.S("err = row.Scan(&" + VariableName(serialId.Name)).S(")").Nl(2)
-		d.S("if err!=nil {").MoreIdent(Tab).Nl()
-		d.S("return -1, err").LessIdent().Nl()
-		d.S("}").LessIdent().Nl(2)
+		d.R('(').S(VariableAndType(serialId)).S(", err error) {").MoreIdent(Tab).Nl(2)
 	} else {
-		d.S("(tag pgconn.CommandTag, err error) {").MoreIdent(Tab).Nl().
-			S("sql := `INSERT INTO ").S(table).S(" ").S(EscapedColumns(",", columns)).S(" VALUES (").S(VariableDollarNums(",", columns)).S(");`").Nl(2).
-			S("tag, err = conn.Exec(ctx, sql, ").S(VariableNames(",\n\t\t", columns)).S(")").Nl(2)
+		d.S("(tag pgconn.CommandTag, err error) {").MoreIdent(Tab).Nl(2)
 	}
-	d.S("return").LessIdent().Nl().
-		S("}").
-		Nl()
+	genNowDeclaration(conf, d, columns)
+
+	genInsertFuncBodyStartCode(conf, d, table, columns)
+
+	if serialId != nil {
+		d.S("row := conn.QueryRow (ctx, sql")
+		genInsertFuncDbArgsCode(conf, d, columns).R(')').Nl(2).
+			S("err = row.Scan(&" + VariableName(serialId.Name)).S(")").Nl(2)
+
+	} else {
+		d.S("tag, err = conn.Exec (ctx, sql")
+		genInsertFuncDbArgsCode(conf, d, columns)
+
+		d.S(")").Nl(2)
+	}
+	d.S("return").LessIdent().Nl().S("}").Nl(2)
 
 	file.WriteString(d.String())
 }
@@ -397,29 +463,23 @@ func genInsertStatements(variables Variables, conf *Config, file *os.File) {
 func genBatchInsertStatements(variables Variables, conf *Config, file *os.File) {
 	d := &Identer{}
 
-	columns := variables["Columns"].([]*vrm.Column)
-	nonSerialIdColumns := NonSerialIdColumns(columns)
-	variablesAndTypes := VariablesAndTypes(",\n\t\t", nonSerialIdColumns)
 	camelCaseTable := variables["CamelCaseTable"].(string)
 	table := variables["Table"].(string)
-	serialId := SerialId(columns)
+	columns := variables["Columns"].([]*vrm.Column)
 
-	d.S("func BatchInsert").S(camelCaseTable).S(" (b* pgx.Batch, ").S(variablesAndTypes).R(')').
-		S("{").MoreIdent(Tab).Nl()
+	d.S("//BatchInsert").S(camelCaseTable).S(" add to the Batch b a command to be executed").Nl()
 
-	if serialId != nil {
+	d.S("func BatchInsert").S(camelCaseTable).S(" (b* pgx.Batch")
+	genInsertFuncArgsCode(conf, d, columns).R(')').
+		S("{").MoreIdent(Tab).Nl(2)
+	//TODO
+	genNowDeclaration(conf, d, columns)
 
-		d.S("sql := `INSERT INTO ").S(table).S(" ").S(EscapedColumns(",", nonSerialIdColumns)).
-			S(" VALUES (").S(VariableDollarNums(",", nonSerialIdColumns)).S(") RETURNING ").S(serialId.Name).S(";`").Nl(2)
+	genInsertFuncBodyStartCode(conf, d, table, columns)
 
-		d.S("b.Queue (sql, ").S(VariableNames(", ", nonSerialIdColumns)).R(')')
+	d.S("b.Queue (sql")
+	genInsertFuncDbArgsCode(conf, d, columns).R(')').LessIdent().Nl()
 
-	} else {
-		d.S("sql := `INSERT INTO ").S(table).R(' ').S(EscapedColumns(",", columns)).S(" VALUES (").S(VariableDollarNums(",", columns)).S(");`").Nl(2).
-			S("b.Queue (sql, ").S(VariableNames(", ", columns)).R(')')
-	}
-
-	d.LessIdent().Nl()
 	d.S("}").LessIdent().Nl(2)
 	file.WriteString(d.String())
 }
@@ -428,27 +488,20 @@ func genStructBatchInsertStatements(variables Variables, conf *Config, file *os.
 	d := &Identer{}
 
 	columns := variables["Columns"].([]*vrm.Column)
-	nonSerialIdColumns := NonSerialIdColumns(columns)
-
 	camelCaseTable := variables["CamelCaseTable"].(string)
-	//serialId := SerialId(columns)
 
 	d.S("func (t *").S(camelCaseTable).S(") BatchInsert(b *pgx.Batch) {").MoreIdent(Tab).Nl()
-	d.S("BatchInsert").S(camelCaseTable).S("(b, "). //t.DocumentId, t.SubjectCodeId).LessIndent().Nl()
-							S(VariableNames(",", nonSerialIdColumns, "t.", "")). //BatchInsertDocumentSubjectCode(b, t.DocumentId, t.SubjectCodeId)
-							R(')').LessIdent().Nl()
-	d.R('}').
-		Nl()
+	d.S("BatchInsert").S(camelCaseTable).S("(b")
+	genInsertFuncDbArgsCode(conf, d, columns, "t.").R(')').LessIdent().Nl()
+	d.R('}').Nl()
 
 	file.WriteString(d.String())
-
 }
 
 func genStructInsertStatements(variables Variables, conf *Config, file *os.File) {
 	d := &Identer{}
 
 	columns := variables["Columns"].([]*vrm.Column)
-	nonSerialIdColumns := NonSerialIdColumns(columns)
 
 	camelCaseTable := variables["CamelCaseTable"].(string)
 	serialId := SerialId(columns)
@@ -459,82 +512,189 @@ func genStructInsertStatements(variables Variables, conf *Config, file *os.File)
 	} else {
 		d.S(VariableAndType(serialId))
 	}
-	d.S(" ,err error) {").MoreIdent(Tab).Nl()
+	d.S(" ,err error) {").Nl(2)
 
-	d.S("return Insert").S(camelCaseTable).S(" (ctx, conn, ").S(VariableNames(",", nonSerialIdColumns, "t.", "")).R(')').LessIdent().Nl()
-	d.R('}').
-		Nl()
+	insertColumns := NonSerialIdColumns(columns)
+	if conf.AutoTimestamps {
+		insertColumns = ColumnsDifference(insertColumns, "created_at", "updated_at")
+	}
+
+	d.S("return Insert").S(camelCaseTable).S(" (ctx, conn")
+	genInsertFuncDbArgsCode(conf, d, columns, "t.").R(')').LessIdent().Nl()
+	d.R('}').Nl()
 
 	file.WriteString(d.String())
 }
+func genUpdateFuncArgsCode(conf *Config, d *Identer,
+	constraintColumns, columns []*vrm.Column) *Identer {
 
+	//In every case we update the updated_at column either automatically
+	//either manually
+
+	//we do not touch and we not created code for the created_at column in timestamp autogenerated
+	//we do touch and we create code for the updated_at column in timestamp autogeneration
+
+	inputColumns := constraintColumns
+	//- Αν είναι μέρος των constraints το κρατάμε
+
+	//- Αν ισχύει autogeneration δεν θα πειράξουμε το created_at
+
+	updateColumns := NonSerialIdColumns(columns)
+
+	// Αν ισχύει το autotimestamps αφαιρούμε επίσης τα created_at, updated_at
+	if conf.AutoTimestamps {
+		updateColumns = ColumnsDifference(updateColumns, "created_at", "updated_at")
+	} else { // εάν οι στήλες με τη χρονοσφραγίδα δημιουργίας/ενημέρωσης ενημέρωσης, ενημερώνονται όχι αυτόματα, τότε στείλε τις μεταβλητές στο τέλος
+		updateColumns = PushColumnsToTheEnd(updateColumns, "created_at", "updated_at")
+	}
+
+	// εάν υπάρχουν στήλες εισόδου, όπως και αυτές προς ενημέρωση τότε πρόσθεσε ένα κομμα μετά το quexecer
+	//a. constraints for input
+	if len(inputColumns) > 0 {
+		d.S(", ")
+	}
+
+	//γράψε τις μεταβλητές που αποτελούν και κλειδί, μοναδική στήλη, σειριακό αριθμό κτλ
+	d.S(VariablesAndTypes(",\n\t\t", inputColumns))
+
+	if len(updateColumns) > 0 {
+		d.S(",\n\t\t")
+	}
+
+	d.S(VariablesAndTypes(",\n\t\t", updateColumns, "New"))
+
+	return d
+}
+
+func genUpdateFuncBodyCode(conf *Config, d *Identer, tableName string,
+	constraintColumns, columns []*vrm.Column) *Identer {
+
+	setColumns := NonSerialIdColumns(columns)
+
+	setColumns = ColumnsDifference(setColumns, "created_at")
+
+	genNowDeclaration(conf, d, setColumns)
+	if !conf.AutoTimestamps {
+		setColumns = PushColumnsToTheEnd(setColumns, "updated_at")
+	}
+
+	d.S("sql:= `UPDATE ").S(tableName).Nl().
+		S("SET").MoreIdent(Tab).Nl().S(EscapedColumnsAndVariableNums(", ", setColumns, len(constraintColumns)+1)).
+		LessIdent().Nl().
+		S("WHERE").MoreIdent(Tab).Nl().
+		S(EscapedColumnsAndVariableNums(", ", constraintColumns)).S("`;").LessIdent().Nl(2)
+
+	d.S("return conn.Exec(ctx, sql")
+
+	if len(constraintColumns) > 0 {
+		d.S(", ").S(VariableNames(", ", constraintColumns))
+	}
+
+	//	SET
+	//	"type"=$2, "number"=$3, "year"=$4, qualifier=$5, "date"=$6, date_time=$7, last_update=$8, classification=$9, uuid=$10, original_language=$11, inter_institutional_codes=$12, status=$13
+
+	//sqlFuncCallArgs are different from setColumns if autotimestamp is true.
+	//updated_at column is automatically set to "now" golang variable.
+	sqlFuncCallArgs := setColumns
+	if conf.AutoTimestamps {
+		sqlFuncCallArgs = ColumnsDifference(sqlFuncCallArgs, "updated_at")
+	}
+
+	if len(setColumns) > 0 {
+		d.S(", ")
+
+		d.S(VariableNames(", ", sqlFuncCallArgs, "New"))
+
+		// if we are using automatic stamping then we have to set UpdatedAt= now
+		if len(setColumns)-len(sqlFuncCallArgs) > 0 {
+			d.S(", now")
+		}
+	}
+
+	d.R(')').LessIdent().Nl()
+
+	//In every case we update the updated_at column either automatically
+	//either manually
+
+	//we do not touch and we not created code for the created_at column in timestamp autogenerated
+	//we do touch and we create code for the updated_at column in timestamp autogeneration
+
+	// columnsForInput := constraintColumns
+	// //- Αν είναι μέρος των constraints το κρατάμε
+	// //- Αν ισχύει autogeneration δεν θα πειράξουμε το created_at
+
+	// columnsΤοUpdate := NonSerialIdColumns(columns)
+
+	// // Αν ισχύει το autotimestamps αφαιρούμε επίσης τα created_at, updated_at
+	// if conf.AutoTimestamps {
+	// 	columnsΤοUpdate = ColumnsDifference(columnsΤοUpdate, "created_at", "updated_at")
+	// } else { // εάν οι στήλες με τη χρονοσφραγίδα δημιουργίας/ενημέρωσης ενημέρωσης, ενημερώνονται όχι αυτόματα, τότε στείλε τις μεταβλητές στο τέλος
+	// 	columnsΤοUpdate = PushColumnsToTheEnd(columnsΤοUpdate, "created_at", "updated_at")
+	// }
+
+	// d.S("return conn.Exec(ctx, sql")
+
+	// // εάν υπάρχουν στήλες εισόδου, όπως και αυτές προς ενημέρωση τότε πρόσθεσε ένα κομμα μετά το quexecer
+	// //a. constraints for input
+	// if len(columnsForInput) > 0 {
+	// 	d.S(", ")
+	// }
+
+	// //γράψε τις μεταβλητές που αποτελούν και κλειδί, μοναδική στήλη, σειριακό αριθμό κτλ
+	// d.S(VariablesAndTypes(",\n\t\t", columnsForInput))
+
+	// if len(columnsΤοUpdate) > 0 {
+	// 	d.S(",\n\t\t")
+	// }
+	return d
+}
 func genUpdateStatements(variables Variables, conf *Config, file *os.File) {
 	d := &Identer{}
 
 	columns := variables["Columns"].([]*vrm.Column)
 	constraints := variables["Constraints"].([]*ConstraintInf)
-	//nonSerialIdColumns := NonSerialIdColumns(columns)
+
+	//if there are no constraints (primary key, unique) then create
+	//a unique constraint including all the columns
+
+	if len(constraints) == 0 {
+		constraints = make([]*ConstraintInf, 1)
+		constraints[0] = &ConstraintInf{Name: "all", Type: "all", Columns: columns}
+	} else {
+		constraints = PrimaryKeyOrUniqueConstraints(constraints)
+	}
 
 	camelCaseTable := variables["CamelCaseTable"].(string)
 	table := variables["Table"].(string)
-	//serialId := SerialId(columns)
 
-	// {{ if $PrimaryKeyOrUniqueConstraints -}}
-	primaryKeyOrUniqueConstraints := PrimaryKeyOrUniqueConstraints(constraints)
-
-	if primaryKeyOrUniqueConstraints != nil {
-		for _, constraint := range primaryKeyOrUniqueConstraints {
-
-			// func Update{{$.CamelCaseTable }}By{{ range .Columns}}{{ variableName .Name}}{{ end }} (ctx context.Context, conn vrm.Quexecer,
-			// 	{{- variablesAndTypes ",\n\t\t" .Columns}}, {{ variablesAndTypes ",\n\t\t" $.Columns "New"}}) (pgconn.CommandTag, error){
-
-			funcArgs := VariableNames(",", constraint.Columns)
-			funcName := "func Update" + camelCaseTable + "By" + VariableNames("", constraint.Columns)
-
-			d.S("//").S(funcName).S(" updates ").S(table).S(" using ").S(funcArgs).Nl()
-			d.S(funcName).S(" (ctx context.Context, conn vrm.Quexecer,").
-				S(VariablesAndTypes(",\n\t\t", constraint.Columns)).S(", ").S(VariablesAndTypes(",\n\t\t", columns, "New")).S(") (pgconn.CommandTag, error){").
-				MoreIdent(Tab).Nl()
-
-			// 	sql:= {{ $tick }}UPDATE {{ $.Table }} SET
-			d.S("sql:= `UPDATE ").S(table).S(" SET").MoreIdent(Tab).Nl().
-				// 	{{ escapedColumnsAndVariableNums ", " $.Columns}}
-				S(EscapedColumnsAndVariableNums(", ", columns)).LessIdent().Nl().
-				// 	WHERE
-				S("WHERE").MoreIdent(Tab).Nl().
-				// 		{{ escapedColumnsAndVariableNums " AND \n\t\t" .Columns}}); `
-				S(EscapedColumnsAndVariableNums(" AND \n\t\t", constraint.Columns)).S("); `").LessIdent().Nl(2).
-
-				// 	return conn.Exec(ctx, sql, {{ variableNames ", " .Columns}},{{ variableNames ", " $.Columns "New"}})
-				S("return conn.Exec(ctx, sql, ").S(VariableNames(", ", constraint.Columns)).S(", ").S(VariableNames(", ", columns, "New")).R(')').LessIdent().Nl().
-				R('}')
-			// }
-
-		}
-
-	} else {
-
-		startWithId := len(columns)
-
-		// {{- $StartWithId:= len $.Columns -}}
-
-		// func Update{{ .CamelCaseTable }} (ctx context.Context, conn vrm.Quexecer,
-		// 		{{ variablesAndTypes ",\n\t\t" .Columns }}, {{ variablesAndTypes ",\n\t\t" .Columns "New"}}) (pgconn.CommandTag, error){
+	// for every constraint set (e.g. primary key, combination of columns key, unique key)
+	for _, constraint := range constraints {
 
 		funcName := "func Update" + camelCaseTable
-		funcArgs := VariablesAndTypes(", ", columns)
-		d.S("//").S(funcName).S(" updates ").S(table).S(" using ").S(funcArgs).Nl()
+		if constraint.Type != "all" {
+			//function name is comprised from update+ camel case name
+			// if there are constrains
+			funcName = funcName + "By" + VariableNames("", constraint.Columns)
+		}
 
-		d.S(funcName).S("(ctx context.Context, conn vrm.Quexecer,").Nl().
-			S(VariablesAndTypes(",\n\t\t", columns)).S(", ").S(VariablesAndTypes(",\n\t\t", columns, "New")).S(") (pgconn.CommandTag, error){").
-			MoreIdent(Tab).Nl().
-			S("sql:= `UPDATE ").S(table).S(" SET").MoreIdent(Tab).Nl().
-			S(EscapedColumnsAndVariableNums(", ", columns)).LessIdent().Nl().
-			S("WHERE").MoreIdent(Tab).Nl().
-			S(EscapedColumnsAndVariableNums(" AND \n\t\t", columns, startWithId)).S("); `").LessIdent().Nl(2).
-			S("return conn.Exec(ctx, sql, ").S(VariableNames(", ", columns)).S(", ").S(VariableNames(", ", columns, "New")).R(')').
-			LessIdent().Nl().
-			R('}')
+		//Creating comments for function
+		d.S("//").S(funcName).S(" updates ").S(table).S(" using ").S(VariableNames(",", constraint.Columns)).Nl()
+
+		//creating function declaration with standard arguments adding costraint column names e.g. id, etc.
+		d.S(funcName).R('(')
+		// for every columns participating in constraint create a camelcase name separated by ,
+		//append update function args declaration
+
+		d.S("ctx context.Context, conn vrm.Quexecer")
+
+		genUpdateFuncArgsCode(conf, d, constraint.Columns, columns)
+
+		d.S(") (pgconn.CommandTag, error){").MoreIdent(Tab).Nl(2)
+
+		//Function Body-----------------
+
+		genUpdateFuncBodyCode(conf, d, table, constraint.Columns, columns)
+		d.S("}").Nl(2)
 	}
 
 	file.WriteString(d.String())
