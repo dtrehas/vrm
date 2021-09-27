@@ -36,11 +36,17 @@ type Batch interface {
 	Queue(query string, args ...interface{})
 }
 
-func BatchResultsClose(results pgx.BatchResults) error {
+func CloseBatchResults(results pgx.BatchResults) error {
 	if results != nil {
 		return results.Close()
 	}
 	return nil
+}
+
+func CloseRows(rows pgx.Rows) {
+	if rows != nil {
+		rows.Close()
+	}
 }
 
 // Stringer is implemented by any value that has a String method,
